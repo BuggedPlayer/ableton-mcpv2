@@ -222,11 +222,19 @@ def start_arrangement_recording(song, ctrl=None):
         raise
 
 
-def stop_arrangement_recording(song, ctrl=None):
-    """Stop arrangement recording."""
+def stop_arrangement_recording(song, stop_playback=True, ctrl=None):
+    """Stop arrangement recording.
+
+    Args:
+        song: Live Song object.
+        stop_playback: If True (default), also stops transport playback.
+            Set to False to stop recording while keeping playback running
+            (useful for punch-out workflows where you want to keep listening).
+        ctrl: Optional controller for logging.
+    """
     try:
         song.record_mode = False
-        if song.is_playing:
+        if stop_playback and song.is_playing:
             song.stop_playing()
         return {"recording": song.record_mode, "playing": song.is_playing}
     except Exception as e:

@@ -404,61 +404,68 @@ function _batchProcessNextChunk() {
     if (!_batchState) return;
 
     var s = _batchState;
-    var end = Math.min(s.cursor + BATCH_CHUNK_SIZE, s.paramsList.length);
 
-    for (var i = s.cursor; i < end; i++) {
-        var paramIdx = parseInt(s.paramsList[i].index);
-        var value    = parseFloat(s.paramsList[i].value);
+    try {
+        var end = Math.min(s.cursor + BATCH_CHUNK_SIZE, s.paramsList.length);
 
-        // Reuse paramCursor via goto() instead of new LiveAPI() per param
-        try {
-            s.paramCursor.goto(s.devicePath + " parameters " + paramIdx);
-        } catch (e) {
-            s.errors.push({ index: paramIdx, error: "LiveAPI error: " + e.toString() });
-            s.failCount++;
-            continue;
+        for (var i = s.cursor; i < end; i++) {
+            var paramIdx = parseInt(s.paramsList[i].index);
+            var value    = parseFloat(s.paramsList[i].value);
+
+            // Reuse paramCursor via goto() instead of new LiveAPI() per param
+            try {
+                s.paramCursor.goto(s.devicePath + " parameters " + paramIdx);
+            } catch (e) {
+                s.errors.push({ index: paramIdx, error: "LiveAPI error: " + e.toString() });
+                s.failCount++;
+                continue;
+            }
+
+            if (!s.paramCursor.id || parseInt(s.paramCursor.id) === 0) {
+                s.errors.push({ index: paramIdx, error: "not found" });
+                s.failCount++;
+                continue;
+            }
+
+            try {
+                var minVal  = parseFloat(s.paramCursor.get("min"));
+                var maxVal  = parseFloat(s.paramCursor.get("max"));
+                var clamped = Math.max(minVal, Math.min(maxVal, value));
+                s.paramCursor.set("value", clamped);
+                s.okCount++;
+            } catch (e) {
+                s.errors.push({ index: paramIdx, error: e.toString() });
+                s.failCount++;
+            }
         }
 
-        if (!s.paramCursor.id || parseInt(s.paramCursor.id) === 0) {
-            s.errors.push({ index: paramIdx, error: "not found" });
-            s.failCount++;
-            continue;
-        }
+        s.cursor = end;
 
-        try {
-            var minVal  = parseFloat(s.paramCursor.get("min"));
-            var maxVal  = parseFloat(s.paramCursor.get("max"));
-            var clamped = Math.max(minVal, Math.min(maxVal, value));
-            s.paramCursor.set("value", clamped);
-            s.okCount++;
-        } catch (e) {
-            s.errors.push({ index: paramIdx, error: e.toString() });
-            s.failCount++;
+        if (s.cursor >= s.paramsList.length) {
+            // All chunks done — send the response
+            var result = {
+                params_set:      s.okCount,
+                params_failed:   s.failCount,
+                total_requested: s.totalRequested
+            };
+            if (s.skippedDeviceOn) {
+                result.skipped_device_on = true;
+            }
+            // Only include error details (not full results) to keep response small
+            if (s.errors.length > 0) {
+                result.errors = s.errors;
+            }
+            sendResult(result, s.requestId);
+            _batchState = null;
+        } else {
+            // Schedule the next chunk after a short delay
+            var t = new Task(_batchProcessNextChunk);
+            t.schedule(BATCH_CHUNK_DELAY);
         }
-    }
-
-    s.cursor = end;
-
-    if (s.cursor >= s.paramsList.length) {
-        // All chunks done — send the response
-        var result = {
-            params_set:      s.okCount,
-            params_failed:   s.failCount,
-            total_requested: s.totalRequested
-        };
-        if (s.skippedDeviceOn) {
-            result.skipped_device_on = true;
-        }
-        // Only include error details (not full results) to keep response small
-        if (s.errors.length > 0) {
-            result.errors = s.errors;
-        }
-        sendResult(result, s.requestId);
+    } catch (e) {
+        var rid = s ? s.requestId : "";
         _batchState = null;
-    } else {
-        // Schedule the next chunk after a short delay
-        var t = new Task(_batchProcessNextChunk);
-        t.schedule(BATCH_CHUNK_DELAY);
+        sendError("Batch processing failed at cursor " + (s ? s.cursor : "?") + ": " + e.toString(), rid);
     }
 }
 
@@ -963,12 +970,11 @@ function handleSimplerSlice(args) {
                 sampleApi.call("clear_slices");
                 sendResult({ action: "clear" }, requestId);
                 break;
-            case "move": {
-                let newTime = parseFloat(args[4]);
+            case "move":
+                var newTime = parseFloat(args[4]);
                 sampleApi.call("move_slice", sliceTime, newTime);
                 sendResult({ action: "move", old_time: sliceTime, new_time: newTime }, requestId);
                 break;
-            }
             case "reset":
                 sampleApi.call("reset_slices");
                 sendResult({ action: "reset" }, requestId);
