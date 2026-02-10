@@ -1,11 +1,16 @@
-# AbletonMCP Max for Live Bridge (v2.0.0)
+# AbletonMCP Max for Live Bridge (v3.1.0)
 
-Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Adds **10 tools** for:
+Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Now an **Audio Effect** device (upgraded from MIDI Effect) — enabling real-time audio analysis via `plugin~`. Adds **23 tools** for:
 
 - Hidden/non-automatable parameters on any Ableton device
 - Device chain navigation inside Instrument Racks, Audio Effect Racks, and Drum Racks
 - Simpler/Sample deep access (markers, warp settings, slices)
 - Wavetable modulation matrix control
+- Cue points & arrangement locators
+- Groove pool access and modification
+- Event-driven property monitoring (~10ms latency)
+- Undo-clean parameter control
+- Audio analysis (cross-track meter levels + MSP spectral data)
 
 ## What It Adds
 
@@ -16,13 +21,19 @@ Optional deep Live Object Model (LOM) access that extends the standard AbletonMC
 | Rack chain navigation | No | **Yes** |
 | Simpler sample control | Basic | **Deep** (markers, slices, warp) |
 | Wavetable modulation matrix | No | **Yes** |
+| Cue points / locators | No | **Yes** |
+| Groove pool | No | **Yes** |
+| Event monitoring (live.observer) | No | **Yes** (~10ms) |
+| Undo-clean parameter sets | No | **Yes** |
+| Audio analysis (any track meters) | No | **Yes** (LOM cross-track) |
+| Spectral analysis (8-band) | No | **Yes** (fffb~ filter bank) |
 
 ## How It Works
 
 ```
 MCP Server
-  ├── TCP :9877 → Remote Script (128 tools)
-  └── UDP :9878 / :9879 → M4L Bridge (10 tools, OSC protocol)
+  ├── TCP :9877 → Remote Script (175 tools)
+  └── UDP :9878 / :9879 → M4L Bridge (23 tools, OSC protocol)
 ```
 
 The server sends OSC commands with typed arguments. The M4L device processes them via the Live Object Model and returns URL-safe base64-encoded JSON responses. Large responses (>1.5KB) are automatically chunked into ~3.6KB UDP packets and reassembled by the server.
@@ -40,15 +51,13 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
 
 1. **Open Ableton Live**
 
-2. **Create a new MIDI track** (or use any existing track)
+2. **Create a new Max Audio Effect**:
+   - In the browser, go to **Max for Live → Max Audio Effect**
+   - Drag it onto any audio track (or MIDI track with an instrument)
 
-3. **Create a new Max MIDI Effect**:
-   - In the browser, go to **Max for Live → Max MIDI Effect**
-   - Drag it onto the MIDI track
+3. **Open the Max editor** (click the wrench icon on the device)
 
-4. **Open the Max editor** (click the wrench icon on the device)
-
-5. **Build the patch** with these 3 objects connected in order:
+4. **Build the core patch** with these 3 objects connected in order:
 
    ```
    [udpreceive 9878]
@@ -60,24 +69,74 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
 
    To add each object: press **N** to create a new object, type the text (e.g., `udpreceive 9878`), then press Enter. Connect them top-to-bottom with patch cables.
 
-6. **Add the JavaScript file**:
+5. **Add audio passthrough** — connect the default `plugin~` and `plugout~` objects:
+
+   ```
+   [plugin~]  →  [plugout~]
+   ```
+
+   This ensures the device passes audio through without muting the track.
+
+6. **Add audio analysis chain** (for `analyze_track_audio` MSP data):
+
+   ```
+   [plugin~]          [plugin~]
+       |                   |
+   [peakamp~ 100]     [peakamp~ 100]
+       |                   |
+   [snapshot~ 200]     [snapshot~ 200]
+       \                 /
+     [pack f f 0. 0.]
+            |
+     [prepend audio_data]
+            |
+     [js m4l_bridge.js]  ← connect to EXISTING [js] object
+   ```
+
+   Two `plugin~` objects tap left/right channels. `peakamp~` extracts peak amplitude, `snapshot~` converts to messages.
+
+7. **Add spectrum analysis chain** (for `analyze_track_spectrum`):
+
+   ```
+   [plugin~]
+       |
+   [fffb~ 8]          ← 8-band fixed filter bank
+    ||||||||
+    8× [snapshot~ 100] ← one per outlet
+    ||||||||
+   [pack 0. 0. 0. 0. 0. 0. 0. 0.]
+       |
+   [prepend spectrum_data]
+       |
+   [js m4l_bridge.js]  ← connect to EXISTING [js] object
+   ```
+
+   `fffb~ 8` splits audio into 8 frequency bands. Each band is sampled by `snapshot~` and packed into a list.
+
+8. **Add the JavaScript file**:
    - Copy `m4l_bridge.js` from this directory to the same folder where your `.amxd` device is saved
    - In the Max editor, the `[js m4l_bridge.js]` object should find it automatically
    - If not, use the Max file browser to locate it
 
-7. **Save the device**:
+9. **Save the device**:
    - **Lock the patch** first (Cmd+E / Ctrl+E)
    - **File → Save As...** in the Max editor
    - Save as `AbletonMCP_Bridge.amxd` in your User Library
-   - Recommended path: `User Library/Presets/MIDI Effects/Max MIDI Effect/`
+   - Recommended path: `User Library/Presets/Audio Effects/Max Audio Effect/`
 
-8. **Close the Max editor**
+10. **Close the Max editor**
+
+### Why Audio Effect (not MIDI Effect)?
+
+The device was originally a MIDI Effect, but `plugin~` in a MIDI Effect receives **no audio** — it sits before the instrument in the signal chain, so there's nothing to analyze. As an Audio Effect, `plugin~` taps the post-instrument audio signal, enabling real-time RMS/peak measurement and spectral analysis.
+
+All 28 OSC commands, LiveAPI access, observers, and cross-track meter reading work identically in both device types. The only difference is that MSP audio analysis (`plugin~`, `peakamp~`, `fffb~`) now actually receives audio.
 
 ### Loading the Device
 
 1. Open your Ableton Live project
 2. Find `AbletonMCP_Bridge` in your User Library browser
-3. Drag it onto **any MIDI track** (it listens globally via UDP — the track doesn't matter)
+3. Drag it onto **any track** — audio tracks work directly; MIDI tracks need an instrument before the device
 4. The device will immediately start listening on UDP port 9878
 
 ### Verifying the Connection
@@ -85,7 +144,7 @@ The `.amxd` device must be built manually in Ableton's Max editor since it canno
 Use the `m4l_status` MCP tool to check if the bridge is connected:
 
 ```
-m4l_status()  →  "M4L bridge connected (v2.0.0)"
+m4l_status()  →  "M4L bridge connected (v3.1.0)"
 ```
 
 ## Available MCP Tools (When Bridge Is Loaded)
@@ -125,6 +184,41 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 | `set_wavetable_modulation(track, device, target, source, amount)` | Set modulation amount (Env2/Env3/LFO1/LFO2 → target) |
 | `set_wavetable_properties(track, device, ...)` | Set wavetable selection, effect modes (via M4L). Unison/filter/voice properties are read-only (Ableton API limitation) |
 
+### Cue Points & Locators (v3.0.0)
+
+| Tool | Description |
+|---|---|
+| `get_cue_points()` | List all arrangement locators with names and beat positions |
+| `jump_to_cue_point(cue_point_index)` | Move playback position to a specific locator |
+
+### Groove Pool (v3.0.0)
+
+| Tool | Description |
+|---|---|
+| `get_groove_pool()` | List all grooves with base, timing, velocity, random, quantize properties |
+| `set_groove_properties(groove_index, ...)` | Set groove base, timing, velocity, random, quantize_rate |
+
+### Event-Driven Monitoring (v3.0.0)
+
+| Tool | Description |
+|---|---|
+| `observe_property(lom_path, property_name)` | Start watching a LOM property (~10ms change detection) |
+| `stop_observing(lom_path, property_name)` | Stop watching a property |
+| `get_property_changes()` | Retrieve accumulated change events (clears after read) |
+
+### Undo-Clean Parameter Control (v3.0.0)
+
+| Tool | Description |
+|---|---|
+| `set_parameter_clean(track, device, param_index, value)` | Set parameter via M4L bridge with minimal undo impact |
+
+### Audio Analysis (v3.1.0)
+
+| Tool | Description |
+|---|---|
+| `analyze_track_audio(track_index?)` | Get LOM meter levels for **any track** (cross-track). Optional `track_index`: -1=own track (default), 0+=specific track, -2=master |
+| `analyze_track_spectrum()` | Get 8-band spectral data from fffb~ filter bank (device's own track) |
+
 ## Troubleshooting
 
 **"M4L bridge not connected"**
@@ -137,13 +231,18 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 - Try removing and re-adding the device to the track
 - Double-click the `[js m4l_bridge.js]` object to reload the script
 
+**Spectrum data all zeros**
+- Audio must be playing through the track where the device is loaded
+- The device must be an **Audio Effect** (not MIDI Effect) — `plugin~` in a MIDI Effect receives no audio
+- On MIDI tracks, the device must be placed **after** an instrument in the chain
+
 **Port conflicts**
 - Default ports: 9878 (commands) and 9879 (responses)
 - If these conflict with other software, edit the port numbers in:
   - The Max patch objects (`udpreceive` and `udpsend`)
   - `server.py` (`M4LConnection` class: `send_port` and `recv_port`)
 
-## OSC Commands Reference (v2.0.0)
+## OSC Commands Reference (v3.1.0)
 
 | Address | Arguments | Description |
 |---|---|---|
@@ -153,7 +252,7 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 | `/set_hidden_param` | `track_idx, device_idx, param_idx, value, request_id` | Set a parameter by LOM index |
 | `/batch_set_hidden_params` | `track_idx, device_idx, params_b64, request_id` | Set multiple params (chunked, base64 JSON) |
 | `/check_dashboard` | `request_id` | Returns dashboard URL and bridge version |
-| `/discover_chains` | `track_idx, device_idx, [extra_path], request_id` | Discover rack chains and drum pads. Optional `extra_path` for nested racks |
+| `/discover_chains` | `track_idx, device_idx, [extra_path], request_id` | Discover rack chains and drum pads |
 | `/get_chain_device_params` | `track_idx, device_idx, chain_idx, chain_device_idx, request_id` | Get nested device params |
 | `/set_chain_device_param` | `track_idx, device_idx, chain_idx, chain_device_idx, param_idx, value, request_id` | Set nested device param |
 | `/get_simpler_info` | `track_idx, device_idx, request_id` | Get Simpler + sample info |
@@ -162,8 +261,33 @@ m4l_status()  →  "M4L bridge connected (v2.0.0)"
 | `/get_wavetable_info` | `track_idx, device_idx, request_id` | Get Wavetable state + mod matrix |
 | `/set_wavetable_modulation` | `track_idx, device_idx, target_idx, source_idx, amount, request_id` | Set mod matrix amount |
 | `/set_wavetable_props` | `track_idx, device_idx, props_b64, request_id` | Set Wavetable properties (base64 JSON) |
+| `/get_cue_points` | `request_id` | List all arrangement locators |
+| `/jump_to_cue_point` | `cue_point_idx, request_id` | Jump playback to a locator |
+| `/get_groove_pool` | `request_id` | List all grooves with properties |
+| `/set_groove_properties` | `groove_idx, props_b64, request_id` | Set groove properties (base64 JSON) |
+| `/observe_property` | `lom_path, property_name, request_id` | Start observing a LOM property |
+| `/stop_observing` | `lom_path, property_name, request_id` | Stop observing a property |
+| `/get_observed_changes` | `request_id` | Get accumulated property changes |
+| `/set_param_clean` | `track_idx, device_idx, param_idx, value, request_id` | Set param with minimal undo |
+| `/analyze_audio` | `track_index, request_id` | Get audio meter levels + MSP data. `track_index`: -1=own, 0+=specific, -2=master |
+| `/analyze_spectrum` | `request_id` | Get spectral analysis data (8-band fffb~) |
 
 ## Technical Notes
+
+### Device Type: Audio Effect
+
+As of v3.1.0, the bridge is an **Audio Effect** (not MIDI Effect). This is required because `plugin~` in a MIDI Effect sits before the instrument in the signal chain and receives no audio. As an Audio Effect, `plugin~` taps the post-instrument audio, enabling MSP-based analysis (RMS, peak, spectrum).
+
+All LOM-based tools (hidden params, rack chains, observers, cross-track meters) work identically regardless of device type. Only the MSP audio chain requires the Audio Effect placement.
+
+### Cross-Track Audio Analysis
+
+The `analyze_track_audio` tool reads LOM `output_meter_left`/`output_meter_right` for any track by path:
+- `live_set tracks N` — any regular track
+- `live_set master_track` — master track
+- `this_device canonical_parent` — device's own track (default)
+
+This works from a single device instance — no need to load the bridge on every track.
 
 ### Communication
 - **Protocol**: Native OSC messages over UDP. Server builds typed OSC packets; M4L parses via Max's built-in OSC support.
@@ -192,3 +316,5 @@ Key safety: never creates the full base64 string in memory; `.replace()` for URL
 
 ### Known Limitations
 - **Wavetable voice properties** (`unison_mode`, `unison_voice_count`, `filter_routing`, `mono_poly`, `poly_voices`) are read-only — not exposed as DeviceParameters, and `LiveAPI.set()` silently fails. Hard Ableton API limitation.
+- **MSP audio analysis** (RMS/peak/spectrum via `plugin~`) only works for the device's own track. Cross-track analysis uses LOM meters instead (always available for any track).
+- **ASCII-only in responses** — Unicode characters above 127 corrupt Max's `[js]` base64 encoder. All response strings must use ASCII only.

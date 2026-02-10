@@ -4,6 +4,81 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.5.0 — 2026-02-10
+
+### M4L Bridge v3.1.0: Audio Effect + Cross-Track Analysis
+
+#### Device Type: MIDI Effect → Audio Effect
+- The M4L bridge device is now an **Audio Effect** (was MIDI Effect)
+- `plugin~` in a MIDI Effect receives no audio — it sits before the instrument in the signal chain
+- As an Audio Effect, `plugin~` taps post-instrument audio, enabling real-time RMS/peak and spectral analysis
+- All 28 OSC commands, LiveAPI access, and observers work identically in both device types
+
+#### Cross-Track Audio Metering
+- `analyze_track_audio` now accepts an optional `track_index` parameter
+  - `-1` (default): device's own track (backward compatible)
+  - `0, 1, 2, ...`: read meters from any specific track
+  - `-2`: read master track meters
+- Reads LOM `output_meter_left`/`output_meter_right` for any track by path — no need to load the bridge on every track
+- MSP data (RMS/peak) still comes from the device's own track only
+
+#### 8-Band Spectral Analysis (fffb~)
+- Max patch now uses `plugin~` → `fffb~ 8` → 8× `snapshot~ 100` → `pack` → `prepend spectrum_data` → `[js]`
+- `fffb~` splits audio into 8 perceptually useful frequency bands
+- Simpler and more reliable than raw FFT (`fft~` → `cartopol~`) — no subpatch needed
+- `analyze_track_spectrum` returns bin magnitudes, dominant band, and spectral centroid
+
+#### Audio Analysis Chain (peakamp~)
+- Max patch uses `plugin~` → `peakamp~ 100` → `snapshot~ 200` → `pack` → `prepend audio_data` → `[js]`
+- Two channels (L/R) for stereo RMS/peak measurement
+- Audio passthrough via `plugin~` → `plugout~` ensures the device doesn't mute the track
+
+#### Updated Documentation
+- M4L Device README rewritten for Audio Effect setup (step-by-step wiring for all chains)
+- Added troubleshooting for "spectrum data all zeros" (MIDI Effect vs Audio Effect)
+- OSC reference updated: `/analyze_audio` now takes `track_index` integer parameter
+
+---
+
+## v2.4.0 — 2026-02-10
+
+### New: M4L Bridge v3.0.0 — 5 New Capability Phases (10 tools)
+
+#### Phase 7: Cue Points & Locators (2 tools, requires M4L)
+- `get_cue_points` — list all arrangement locators with names and beat positions
+- `jump_to_cue_point` — move playback position to a specific locator
+- Accesses `live_set cue_points` — not available via the Python Remote Script
+
+#### Phase 8: Groove Pool Access (2 tools, requires M4L)
+- `get_groove_pool` — list all grooves with base, timing, velocity, random, quantize properties
+- `set_groove_properties` — modify groove parameters (base64-encoded JSON payload)
+- Accesses `live_set groove_pool grooves` via LOM
+
+#### Phase 6: Event-Driven Monitoring (3 tools, requires M4L)
+- `observe_property` — start watching a LOM property for changes via `live.observer` (~10ms latency vs 100ms+ TCP polling)
+- `stop_observing` — stop watching a property
+- `get_property_changes` — retrieve accumulated change events (ring buffer, clears after read)
+- Useful for: `is_playing`, `tempo`, `current_song_time`, track `output_meter_level`
+
+#### Phase 9: Undo-Clean Parameter Control (1 tool, requires M4L)
+- `set_parameter_clean` — set a device parameter via M4L bridge with minimal undo impact
+- Routes through M4L's LiveAPI instead of the TCP Remote Script
+
+#### Phase 5: Audio Analysis (2 tools, requires M4L)
+- `analyze_track_audio` — LOM meter levels (left/right) + MSP RMS/peak data (if Max patch configured)
+- `analyze_track_spectrum` — FFT spectral data: bins, dominant frequency, spectral centroid (requires Max patch fft~ setup)
+- Bridge accepts `audio_data` and `spectrum_data` messages from Max patch MSP objects
+
+### M4L Bridge v3.0.0
+- 10 new OSC commands: `/get_cue_points`, `/jump_to_cue_point`, `/get_groove_pool`, `/set_groove_properties`, `/observe_property`, `/stop_observing`, `/get_observed_changes`, `/set_param_clean`, `/analyze_audio`, `/analyze_spectrum`
+- Observer system: ring buffer (200 entries per observer) with `LiveAPI` callback pattern
+- Audio analysis data store: accepts `audio_data` and `spectrum_data` messages from Max patch
+- Total bridge commands: 18 → **28**
+
+### Total tools: 188 → **198** (+10 M4L) + **19 optional** (ElevenLabs) = **217 total**
+
+---
+
 ## v2.3.0 — 2026-02-10
 
 ### New: UDP Real-Time Parameter Channel (2 tools)

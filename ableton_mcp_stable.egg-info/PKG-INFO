@@ -1,3 +1,26 @@
+Metadata-Version: 2.4
+Name: ableton-mcp-stable
+Version: 2.5.0
+Summary: AbletonMCP Beta — Ableton Live integration through the Model Context Protocol
+Author-email: Siddharth Ahuja <ahujasid@gmail.com>
+License: MIT
+Project-URL: Homepage, https://github.com/BuggedPlayer/ableton-mcp-beta
+Project-URL: Bug Tracker, https://github.com/BuggedPlayer/ableton-mcp-beta/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: mcp[cli]>=1.3.0
+Provides-Extra: elevenlabs
+Requires-Dist: elevenlabs>=0.2.26; extra == "elevenlabs"
+Requires-Dist: python-dotenv>=1.0.0; extra == "elevenlabs"
+Requires-Dist: httpx; extra == "elevenlabs"
+Requires-Dist: pydantic>=2.0; extra == "elevenlabs"
+Requires-Dist: fuzzywuzzy; extra == "elevenlabs"
+Dynamic: license-file
+
 # AbletonMCP
 
 **198 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)

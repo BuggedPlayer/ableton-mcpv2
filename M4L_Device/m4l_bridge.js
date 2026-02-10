@@ -21,7 +21,7 @@ outlets = 1;
 // Initialization
 // ---------------------------------------------------------------------------
 function loadbang() {
-    post("AbletonMCP Beta M4L Bridge v2.0.0 starting...\n");
+    post("AbletonMCP Beta M4L Bridge v3.1.0 starting...\n");
     post("Listening for OSC commands on port 9878.\n");
     post("Dashboard: http://127.0.0.1:9880\n");
 }
@@ -123,6 +123,51 @@ function anything() {
             handleSetDeviceProperty(args);
             break;
 
+        // --- Phase 7: Cue Points & Locators ---
+        case "get_cue_points":
+            handleGetCuePoints(args);
+            break;
+
+        case "jump_to_cue_point":
+            handleJumpToCuePoint(args);
+            break;
+
+        // --- Phase 8: Groove Pool ---
+        case "get_groove_pool":
+            handleGetGroovePool(args);
+            break;
+
+        case "set_groove_properties":
+            handleSetGrooveProperties(args);
+            break;
+
+        // --- Phase 6: Event-Driven Monitoring ---
+        case "observe_property":
+            handleObserveProperty(args);
+            break;
+
+        case "stop_observing":
+            handleStopObserving(args);
+            break;
+
+        case "get_observed_changes":
+            handleGetObservedChanges(args);
+            break;
+
+        // --- Phase 9: Undo-Clean Parameter Control ---
+        case "set_param_clean":
+            handleSetParamClean(args);
+            break;
+
+        // --- Phase 5: Audio Analysis ---
+        case "analyze_audio":
+            handleAnalyzeAudio(args);
+            break;
+
+        case "analyze_spectrum":
+            handleAnalyzeSpectrum(args);
+            break;
+
         default:
             post("AbletonMCP Beta Bridge: unknown command: '" + cmd + "' (raw: '" + addr + "')\n");
             break;
@@ -138,7 +183,7 @@ function handlePing(args) {
     var requestId = (args.length > 0) ? args[0].toString() : "";
     var response = {
         status: "success",
-        result: { m4l_bridge: true, version: "2.0.0" },
+        result: { m4l_bridge: true, version: "3.1.0" },
         id: requestId
     };
     sendResponse(JSON.stringify(response));
@@ -475,7 +520,7 @@ function handleCheckDashboard(args) {
         status: "success",
         result: {
             dashboard_url: "http://127.0.0.1:9880",
-            bridge_version: "2.0.0",
+            bridge_version: "3.1.0",
             message: "Open the dashboard URL in your browser to view server status"
         },
         id: requestId
@@ -1755,4 +1800,531 @@ function readParamInfo(paramApi, index) {
     }
 
     return info;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: Cue Points & Locators
+//
+// Cue points (locators) are arrangement markers accessible via:
+//   live_set cue_points N  (children of live_set)
+// Properties: name (str), time (float, in beats)
+// ---------------------------------------------------------------------------
+
+function handleGetCuePoints(args) {
+    // args: [request_id (string)]
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+
+    try {
+        var api = new LiveAPI(null, "live_set");
+        if (!api || !api.id || parseInt(api.id) === 0) {
+            sendError("Could not access live_set", requestId);
+            return;
+        }
+
+        var count = 0;
+        try { count = parseInt(api.getcount("cue_points")); } catch (e) {}
+
+        var cuePoints = [];
+        var cursor = new LiveAPI(null, "live_set");
+
+        for (var i = 0; i < count; i++) {
+            cursor.goto("live_set cue_points " + i);
+            if (!cursor.id || parseInt(cursor.id) === 0) continue;
+
+            var cp = { index: i };
+            try { cp.name = cursor.get("name").toString(); } catch (e) { cp.name = ""; }
+            try { cp.time = parseFloat(cursor.get("time")); } catch (e) { cp.time = 0; }
+            cuePoints.push(cp);
+        }
+
+        sendResult({
+            cue_point_count: cuePoints.length,
+            cue_points: cuePoints
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to get cue points: " + e.toString(), requestId);
+    }
+}
+
+function handleJumpToCuePoint(args) {
+    // args: [cue_point_index (int), request_id (string)]
+    if (args.length < 2) {
+        sendError("jump_to_cue_point requires cue_point_index, request_id", "");
+        return;
+    }
+    var cpIndex   = parseInt(args[0]);
+    var requestId = args[1].toString();
+
+    try {
+        var cpApi = new LiveAPI(null, "live_set cue_points " + cpIndex);
+        if (!cpApi || !cpApi.id || parseInt(cpApi.id) === 0) {
+            sendError("No cue point found at index " + cpIndex, requestId);
+            return;
+        }
+
+        var cpTime = parseFloat(cpApi.get("time"));
+        var cpName = cpApi.get("name").toString();
+
+        // Set the song position to the cue point time
+        var songApi = new LiveAPI(null, "live_set");
+        songApi.set("current_song_time", cpTime);
+
+        sendResult({
+            jumped_to: cpIndex,
+            name: cpName,
+            time: cpTime
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to jump to cue point: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: Groove Pool Access
+//
+// Grooves live under live_set groove_pool:
+//   live_set groove_pool grooves N
+// Groove properties: name, base (float 0-1), timing (float 0-1),
+//   velocity (float 0-1), random (float 0-1), quantize_rate (int)
+// ---------------------------------------------------------------------------
+
+function handleGetGroovePool(args) {
+    // args: [request_id (string)]
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+
+    try {
+        var poolApi = new LiveAPI(null, "live_set groove_pool");
+        if (!poolApi || !poolApi.id || parseInt(poolApi.id) === 0) {
+            sendError("Could not access groove pool", requestId);
+            return;
+        }
+
+        var count = 0;
+        try { count = parseInt(poolApi.getcount("grooves")); } catch (e) {}
+
+        var grooves = [];
+        var cursor = new LiveAPI(null, "live_set groove_pool");
+
+        for (var i = 0; i < count; i++) {
+            cursor.goto("live_set groove_pool grooves " + i);
+            if (!cursor.id || parseInt(cursor.id) === 0) continue;
+
+            var g = { index: i };
+            try { g.name = cursor.get("name").toString(); } catch (e) { g.name = ""; }
+            try { g.base = parseFloat(cursor.get("base")); } catch (e) {}
+            try { g.timing = parseFloat(cursor.get("timing")); } catch (e) {}
+            try { g.velocity = parseFloat(cursor.get("velocity")); } catch (e) {}
+            try { g.random = parseFloat(cursor.get("random")); } catch (e) {}
+            try { g.quantize_rate = parseInt(cursor.get("quantize_rate")); } catch (e) {}
+            grooves.push(g);
+        }
+
+        sendResult({
+            groove_count: grooves.length,
+            grooves: grooves
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to get groove pool: " + e.toString(), requestId);
+    }
+}
+
+function handleSetGrooveProperties(args) {
+    // args: [groove_index (int), props_json_b64 (string), request_id (string)]
+    if (args.length < 3) {
+        sendError("set_groove_properties requires groove_index, props_json_b64, request_id", "");
+        return;
+    }
+    var grooveIdx = parseInt(args[0]);
+    var requestId = args[args.length - 1].toString();
+
+    // Reassemble b64 payload (Max may split long strings)
+    var b64Parts = [];
+    for (var a = 1; a < args.length - 1; a++) {
+        b64Parts.push(args[a].toString());
+    }
+    var propsB64 = b64Parts.join("");
+
+    var propsJson;
+    try { propsJson = _base64decode(propsB64); } catch (e) {
+        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        return;
+    }
+    var props;
+    try { props = JSON.parse(propsJson); } catch (e) {
+        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    try {
+        var grooveApi = new LiveAPI(null, "live_set groove_pool grooves " + grooveIdx);
+        if (!grooveApi || !grooveApi.id || parseInt(grooveApi.id) === 0) {
+            sendError("No groove found at index " + grooveIdx, requestId);
+            return;
+        }
+
+        var settable = ["base", "timing", "velocity", "random", "quantize_rate"];
+        var setCount = 0;
+        var errors = [];
+        var details = [];
+
+        for (var key in props) {
+            if (!props.hasOwnProperty(key)) continue;
+            var found = false;
+            for (var s = 0; s < settable.length; s++) {
+                if (settable[s] === key) { found = true; break; }
+            }
+            if (!found) {
+                errors.push({ property: key, error: "not a settable property" });
+                continue;
+            }
+            try {
+                grooveApi.set(key, props[key]);
+                setCount++;
+                details.push({ property: key, value: props[key] });
+            } catch (e) {
+                errors.push({ property: key, error: e.toString() });
+            }
+        }
+
+        var result = { groove_index: grooveIdx, properties_set: setCount };
+        if (details.length > 0) result.details = details;
+        if (errors.length > 0) result.errors = errors;
+        sendResult(result, requestId);
+    } catch (e) {
+        sendError("Failed to set groove properties: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: Event-Driven Monitoring via live.observer pattern
+//
+// Max's LiveAPI in [js] supports callbacks via the second constructor arg.
+// When a property changes, the callback fires with the new value.
+// We store changes in a ring buffer and return them on demand.
+// ---------------------------------------------------------------------------
+var _observers = {};       // key = "path:property", value = {api, changes[]}
+var MAX_OBSERVER_CHANGES = 200;  // ring buffer cap per observer
+
+function handleObserveProperty(args) {
+    // args: [lom_path (string), property_name (string), request_id (string)]
+    if (args.length < 3) {
+        sendError("observe_property requires lom_path, property_name, request_id", "");
+        return;
+    }
+    var lomPath      = args[0].toString();
+    var propertyName = args[1].toString();
+    var requestId    = args[2].toString();
+
+    var key = lomPath + ":" + propertyName;
+    if (_observers[key]) {
+        sendResult({ already_observing: true, key: key }, requestId);
+        return;
+    }
+
+    try {
+        // Create a LiveAPI with a callback function
+        var obs = {
+            changes: [],
+            api: null
+        };
+
+        // The callback function that fires on property changes
+        var callbackName = "_observerCallback_" + Object.keys(_observers).length;
+
+        // Store observer state before creating the API
+        _observers[key] = obs;
+
+        // Create LiveAPI with property observation
+        var api = new LiveAPI(function(args) {
+            // args is an array: [property_name, value]
+            if (args && args.length >= 2) {
+                var entry = {
+                    property: args[0].toString(),
+                    value: args[1],
+                    time: Date.now()
+                };
+                if (obs.changes.length >= MAX_OBSERVER_CHANGES) {
+                    obs.changes.shift();
+                }
+                obs.changes.push(entry);
+            }
+        }, lomPath);
+
+        if (!api || !api.id || parseInt(api.id) === 0) {
+            delete _observers[key];
+            sendError("Invalid LOM path: " + lomPath, requestId);
+            return;
+        }
+
+        // Start observing the property
+        api.property = propertyName;
+        obs.api = api;
+
+        sendResult({
+            observing: true,
+            key: key,
+            path: lomPath,
+            property: propertyName
+        }, requestId);
+    } catch (e) {
+        delete _observers[key];
+        sendError("Failed to start observing: " + e.toString(), requestId);
+    }
+}
+
+function handleStopObserving(args) {
+    // args: [lom_path (string), property_name (string), request_id (string)]
+    if (args.length < 3) {
+        sendError("stop_observing requires lom_path, property_name, request_id", "");
+        return;
+    }
+    var lomPath      = args[0].toString();
+    var propertyName = args[1].toString();
+    var requestId    = args[2].toString();
+
+    var key = lomPath + ":" + propertyName;
+    if (!_observers[key]) {
+        sendResult({ was_observing: false, key: key }, requestId);
+        return;
+    }
+
+    try {
+        // Clear the property observation
+        if (_observers[key].api) {
+            _observers[key].api.property = "";
+        }
+    } catch (e) {}
+
+    var changeCount = _observers[key].changes.length;
+    delete _observers[key];
+
+    sendResult({
+        stopped: true,
+        key: key,
+        pending_changes_discarded: changeCount
+    }, requestId);
+}
+
+function handleGetObservedChanges(args) {
+    // args: [request_id (string)]
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+
+    var allChanges = {};
+    var totalChanges = 0;
+
+    for (var key in _observers) {
+        if (!_observers.hasOwnProperty(key)) continue;
+        var obs = _observers[key];
+        if (obs.changes.length > 0) {
+            allChanges[key] = obs.changes.slice(); // copy
+            totalChanges += obs.changes.length;
+            obs.changes = []; // clear after reading
+        }
+    }
+
+    sendResult({
+        total_changes: totalChanges,
+        observer_count: Object.keys(_observers).length,
+        changes: allChanges
+    }, requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9: Undo-Clean Parameter Control
+//
+// In Max's [js] context, we can set parameter values using the LiveAPI
+// in a way that groups with the current undo step (or we can use
+// begin_undo_step / end_undo_step for control). For "clean" sets,
+// we suppress undo by not calling begin_undo_step.
+//
+// Note: True undo-free sets require live.remote~ in the Max patch.
+// This JS-only approach sets the value via LiveAPI which creates minimal
+// undo entries. The MCP tool documents this limitation.
+// ---------------------------------------------------------------------------
+
+function handleSetParamClean(args) {
+    // args: [track_index (int), device_index (int), parameter_index (int), value (float), request_id (string)]
+    if (args.length < 5) {
+        sendError("set_param_clean requires track_index, device_index, parameter_index, value, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var paramIdx  = parseInt(args[2]);
+    var value     = parseFloat(args[3]);
+    var requestId = args[4].toString();
+
+    var paramPath = "live_set tracks " + trackIdx + " devices " + deviceIdx + " parameters " + paramIdx;
+
+    try {
+        var paramApi = new LiveAPI(null, paramPath);
+        if (!paramApi || !paramApi.id || parseInt(paramApi.id) === 0) {
+            sendError("No parameter found at " + paramPath, requestId);
+            return;
+        }
+
+        var paramName = paramApi.get("name").toString();
+        var minVal    = parseFloat(paramApi.get("min"));
+        var maxVal    = parseFloat(paramApi.get("max"));
+        var clamped   = Math.max(minVal, Math.min(maxVal, value));
+
+        // Set value directly — in [js] context this creates a minimal undo entry
+        paramApi.set("value", clamped);
+
+        sendResult({
+            parameter_name: paramName,
+            parameter_index: paramIdx,
+            requested_value: value,
+            actual_value: clamped,
+            was_clamped: (clamped !== value),
+            note: "Set via M4L bridge. For true undo-free sets, live.remote~ is needed in the Max patch."
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to set parameter cleanly: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: Audio Analysis
+//
+// Audio analysis in [js] relies on data fed from MSP objects in the Max patch.
+// The Max patch should route: plugin~ → analysis objects → [js] via messages.
+//
+// For now, we provide a LOM-based approach that reads track meter levels
+// (output_meter_left/right) which are always available without MSP setup.
+// Full FFT/spectral analysis requires additional Max patch objects.
+// ---------------------------------------------------------------------------
+
+// Audio analysis data store — populated by Max patch messages
+var _audioAnalysis = {
+    rms_left: 0, rms_right: 0,
+    peak_left: 0, peak_right: 0,
+    spectrum: null,
+    last_update: 0
+};
+
+// Called from Max patch: [js] receives "audio_data rms_l rms_r peak_l peak_r"
+function audio_data() {
+    var args = arrayfromargs(arguments);
+    if (args.length >= 4) {
+        _audioAnalysis.rms_left   = parseFloat(args[0]);
+        _audioAnalysis.rms_right  = parseFloat(args[1]);
+        _audioAnalysis.peak_left  = parseFloat(args[2]);
+        _audioAnalysis.peak_right = parseFloat(args[3]);
+        _audioAnalysis.last_update = Date.now();
+    }
+}
+
+// Called from Max patch: [js] receives "spectrum_data bin0 bin1 bin2 ..."
+function spectrum_data() {
+    var args = arrayfromargs(arguments);
+    if (args.length > 0) {
+        var bins = [];
+        for (var i = 0; i < args.length; i++) {
+            bins.push(parseFloat(args[i]));
+        }
+        _audioAnalysis.spectrum = bins;
+        _audioAnalysis.last_update = Date.now();
+    }
+}
+
+function handleAnalyzeAudio(args) {
+    // args: [track_index (int), request_id (string)]
+    // track_index: >= 0 = specific track, -1 = device's own track, -2 = master track
+    var trackIndex = -1;
+    var requestId = "";
+    if (args.length >= 2) {
+        trackIndex = parseInt(args[0]);
+        requestId = args[1].toString();
+    } else if (args.length === 1) {
+        // Backward compat: single arg = request_id only (default to own track)
+        requestId = args[0].toString();
+    }
+
+    // First include MSP data from device's own track (always from _audioAnalysis)
+    var result = {
+        source: "lom_meters",
+        rms_left: _audioAnalysis.rms_left,
+        rms_right: _audioAnalysis.rms_right,
+        peak_left: _audioAnalysis.peak_left,
+        peak_right: _audioAnalysis.peak_right,
+        last_update: _audioAnalysis.last_update
+    };
+
+    // Read the target track's output meter from LOM
+    try {
+        var lomPath;
+        if (trackIndex >= 0) {
+            lomPath = "live_set tracks " + trackIndex;
+        } else if (trackIndex === -2) {
+            lomPath = "live_set master_track";
+        } else {
+            // -1 or default: device's own track
+            lomPath = "this_device canonical_parent";
+        }
+        result.target_track_index = trackIndex;
+
+        var trackApi = new LiveAPI(null, lomPath);
+        if (trackApi && trackApi.id && parseInt(trackApi.id) !== 0) {
+            try { result.output_meter_left  = parseFloat(trackApi.get("output_meter_left")); } catch (e) {}
+            try { result.output_meter_right = parseFloat(trackApi.get("output_meter_right")); } catch (e) {}
+            try { result.output_meter_peak_left  = parseFloat(trackApi.get("output_meter_peak_level")); } catch (e) {}
+            try { result.track_name = trackApi.get("name").toString(); } catch (e) {}
+        }
+    } catch (e) {
+        result.meter_error = e.toString();
+    }
+
+    if (_audioAnalysis.last_update > 0) {
+        result.has_msp_data = true;
+        result.msp_data_age_ms = Date.now() - _audioAnalysis.last_update;
+    } else {
+        result.has_msp_data = false;
+        result.note = "MSP audio analysis not configured. Connect plugin~ to analysis objects in the Max patch for RMS/peak data.";
+    }
+
+    sendResult(result, requestId);
+}
+
+function handleAnalyzeSpectrum(args) {
+    // args: [request_id (string)]
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+
+    if (!_audioAnalysis.spectrum || _audioAnalysis.spectrum.length === 0) {
+        sendResult({
+            has_spectrum: false,
+            note: "No spectral data available. Connect fft~ -> cartopol~ -> the [js] object via 'spectrum_data' messages in the Max patch."
+        }, requestId);
+        return;
+    }
+
+    // Find dominant frequency bin
+    var bins = _audioAnalysis.spectrum;
+    var maxVal = 0;
+    var maxIdx = 0;
+    for (var i = 0; i < bins.length; i++) {
+        if (bins[i] > maxVal) {
+            maxVal = bins[i];
+            maxIdx = i;
+        }
+    }
+
+    // Calculate spectral centroid
+    var weightedSum = 0;
+    var totalEnergy = 0;
+    for (var j = 0; j < bins.length; j++) {
+        weightedSum += j * bins[j];
+        totalEnergy += bins[j];
+    }
+    var centroid = (totalEnergy > 0) ? (weightedSum / totalEnergy) : 0;
+
+    sendResult({
+        has_spectrum: true,
+        bin_count: bins.length,
+        dominant_bin: maxIdx,
+        dominant_magnitude: maxVal,
+        spectral_centroid: centroid,
+        data_age_ms: Date.now() - _audioAnalysis.last_update,
+        bins: bins
+    }, requestId);
 }

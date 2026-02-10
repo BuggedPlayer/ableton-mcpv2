@@ -361,6 +361,66 @@ class M4LConnection:
                 ("s", params_b64),
                 ("s", request_id),
             ])
+        # --- Phase 7: Cue Points ---
+        elif command_type == "get_cue_points":
+            return self._build_osc_message("/get_cue_points", [
+                ("s", request_id),
+            ])
+        elif command_type == "jump_to_cue_point":
+            return self._build_osc_message("/jump_to_cue_point", [
+                ("i", params["cue_point_index"]),
+                ("s", request_id),
+            ])
+        # --- Phase 8: Groove Pool ---
+        elif command_type == "get_groove_pool":
+            return self._build_osc_message("/get_groove_pool", [
+                ("s", request_id),
+            ])
+        elif command_type == "set_groove_properties":
+            props_json = json.dumps(params["properties"], separators=(",", ":"))
+            props_b64 = base64.urlsafe_b64encode(props_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/set_groove_properties", [
+                ("i", params["groove_index"]),
+                ("s", props_b64),
+                ("s", request_id),
+            ])
+        # --- Phase 6: Event Monitoring ---
+        elif command_type == "observe_property":
+            return self._build_osc_message("/observe_property", [
+                ("s", params["lom_path"]),
+                ("s", params["property_name"]),
+                ("s", request_id),
+            ])
+        elif command_type == "stop_observing":
+            return self._build_osc_message("/stop_observing", [
+                ("s", params["lom_path"]),
+                ("s", params["property_name"]),
+                ("s", request_id),
+            ])
+        elif command_type == "get_observed_changes":
+            return self._build_osc_message("/get_observed_changes", [
+                ("s", request_id),
+            ])
+        # --- Phase 9: Clean Params ---
+        elif command_type == "set_param_clean":
+            return self._build_osc_message("/set_param_clean", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["parameter_index"]),
+                ("f", params["value"]),
+                ("s", request_id),
+            ])
+        # --- Phase 5: Audio Analysis ---
+        elif command_type == "analyze_audio":
+            track_index = params.get("track_index", -1) if params else -1
+            return self._build_osc_message("/analyze_audio", [
+                ("i", track_index),
+                ("s", request_id),
+            ])
+        elif command_type == "analyze_spectrum":
+            return self._build_osc_message("/analyze_spectrum", [
+                ("s", request_id),
+            ])
         else:
             raise ValueError(f"Unknown M4L command: {command_type}")
 
@@ -5384,6 +5444,470 @@ def delete_parameter_map(ctx: Context, map_id: str) -> str:
     name = _param_map_store[map_id].get("device_name", map_id)
     del _param_map_store[map_id]
     return f"Deleted parameter map for '{name}' (ID: {map_id})."
+
+
+# ==============================================================================
+# Phase 7: Cue Points & Locators (M4L Bridge)
+# ==============================================================================
+
+@mcp.tool()
+def get_cue_points(ctx: Context) -> str:
+    """Get all cue points (locators) from the arrangement view.
+
+    Returns a list of all arrangement locators with their names and positions (in beats).
+    Cue points are the markers visible in the arrangement timeline.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_cue_points")
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            cue_points = data.get("cue_points", [])
+            count = data.get("cue_point_count", 0)
+
+            if count == 0:
+                return "No cue points (locators) found in the arrangement."
+
+            output = f"Cue Points ({count}):\n\n"
+            for cp in cue_points:
+                time_beats = cp.get("time", 0)
+                bars = int(time_beats // 4) + 1
+                beat_in_bar = (time_beats % 4) + 1
+                output += (
+                    f"  [{cp.get('index', '?')}] \"{cp.get('name', '')}\" "
+                    f"at {time_beats:.2f} beats (bar {bars}, beat {beat_in_bar:.1f})\n"
+                )
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting cue points: {str(e)}")
+        return f"Error getting cue points: {str(e)}"
+
+
+@mcp.tool()
+def jump_to_cue_point(ctx: Context, cue_point_index: int) -> str:
+    """Jump the playback position to a specific cue point (locator).
+
+    Parameters:
+    - cue_point_index: The index of the cue point to jump to (use get_cue_points to see available indices)
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        _validate_index(cue_point_index, "cue_point_index")
+        m4l = get_m4l_connection()
+        result = m4l.send_command("jump_to_cue_point", {
+            "cue_point_index": cue_point_index
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            return (
+                f"Jumped to cue point [{data.get('jumped_to', '?')}] "
+                f"\"{data.get('name', '')}\" at {data.get('time', 0):.2f} beats."
+            )
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error jumping to cue point: {str(e)}")
+        return f"Error jumping to cue point: {str(e)}"
+
+
+# ==============================================================================
+# Phase 8: Groove Pool Access (M4L Bridge)
+# ==============================================================================
+
+@mcp.tool()
+def get_groove_pool(ctx: Context) -> str:
+    """Get all grooves from Ableton's groove pool.
+
+    Returns groove templates with their properties: base amount, timing, velocity,
+    random, and quantize rate. Grooves affect the rhythmic feel of clips.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_groove_pool")
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            grooves = data.get("grooves", [])
+            count = data.get("groove_count", 0)
+
+            if count == 0:
+                return "Groove pool is empty. Drag groove files into Ableton's groove pool to use them."
+
+            output = f"Groove Pool ({count} grooves):\n\n"
+            for g in grooves:
+                output += f"  [{g.get('index', '?')}] \"{g.get('name', '')}\"\n"
+                if "base" in g:
+                    output += f"    Base: {g['base']:.0%}"
+                if "timing" in g:
+                    output += f"  Timing: {g['timing']:.0%}"
+                if "velocity" in g:
+                    output += f"  Velocity: {g['velocity']:.0%}"
+                if "random" in g:
+                    output += f"  Random: {g['random']:.0%}"
+                if "quantize_rate" in g:
+                    output += f"  Quantize: {g['quantize_rate']}"
+                output += "\n"
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting groove pool: {str(e)}")
+        return f"Error getting groove pool: {str(e)}"
+
+
+@mcp.tool()
+def set_groove_properties(
+    ctx: Context,
+    groove_index: int,
+    base: float = None,
+    timing: float = None,
+    velocity: float = None,
+    random: float = None,
+    quantize_rate: int = None,
+) -> str:
+    """Set properties on a groove in the groove pool.
+
+    Parameters:
+    - groove_index: The index of the groove (use get_groove_pool to see available indices)
+    - base: Base groove amount (0.0 to 1.0)
+    - timing: Timing groove amount (0.0 to 1.0)
+    - velocity: Velocity groove amount (0.0 to 1.0)
+    - random: Random groove amount (0.0 to 1.0)
+    - quantize_rate: Quantize rate index
+
+    All property parameters are optional — only provided values will be changed.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        _validate_index(groove_index, "groove_index")
+        properties = {}
+        if base is not None:
+            properties["base"] = float(base)
+        if timing is not None:
+            properties["timing"] = float(timing)
+        if velocity is not None:
+            properties["velocity"] = float(velocity)
+        if random is not None:
+            properties["random"] = float(random)
+        if quantize_rate is not None:
+            properties["quantize_rate"] = int(quantize_rate)
+
+        if not properties:
+            return "No properties specified to set. Provide at least one of: base, timing, velocity, random, quantize_rate."
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_groove_properties", {
+            "groove_index": groove_index,
+            "properties": properties,
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            set_count = data.get("properties_set", 0)
+            details = data.get("details", [])
+            errors = data.get("errors", [])
+            output = f"Groove [{groove_index}]: {set_count} properties set."
+            if details:
+                output += "\n" + ", ".join(f"{d['property']}={d['value']}" for d in details)
+            if errors:
+                output += f"\nErrors: {errors}"
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error setting groove properties: {str(e)}")
+        return f"Error setting groove properties: {str(e)}"
+
+
+# ==============================================================================
+# Phase 6: Event-Driven Monitoring (M4L Bridge)
+# ==============================================================================
+
+@mcp.tool()
+def observe_property(ctx: Context, lom_path: str, property_name: str) -> str:
+    """Start monitoring a Live Object Model property for changes.
+
+    Uses M4L's live.observer for near-instant (~10ms) change detection,
+    much faster than polling via TCP.
+
+    Parameters:
+    - lom_path: The LOM path to observe (e.g., "live_set", "live_set tracks 0")
+    - property_name: The property to watch (e.g., "is_playing", "tempo", "current_song_time")
+
+    Common useful observations:
+    - "live_set" + "is_playing" — detect play/stop
+    - "live_set" + "tempo" — detect tempo changes
+    - "live_set" + "current_song_time" — track playback position
+    - "live_set tracks N" + "output_meter_level" — track level meter
+
+    Use get_property_changes() to retrieve accumulated changes.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("observe_property", {
+            "lom_path": lom_path,
+            "property_name": property_name,
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            if data.get("already_observing"):
+                return f"Already observing {data.get('key', '?')}."
+            return f"Now observing: {data.get('path', '?')}.{data.get('property', '?')}"
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error starting observation: {str(e)}")
+        return f"Error starting observation: {str(e)}"
+
+
+@mcp.tool()
+def stop_observing(ctx: Context, lom_path: str, property_name: str) -> str:
+    """Stop monitoring a Live Object Model property.
+
+    Parameters:
+    - lom_path: The LOM path that was being observed
+    - property_name: The property that was being watched
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("stop_observing", {
+            "lom_path": lom_path,
+            "property_name": property_name,
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            if not data.get("was_observing", True):
+                return f"Was not observing {data.get('key', '?')}."
+            return (
+                f"Stopped observing {data.get('key', '?')}. "
+                f"Discarded {data.get('pending_changes_discarded', 0)} pending changes."
+            )
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error stopping observation: {str(e)}")
+        return f"Error stopping observation: {str(e)}"
+
+
+@mcp.tool()
+def get_property_changes(ctx: Context) -> str:
+    """Get accumulated property change events from all active observers.
+
+    Returns all changes since the last call (changes are cleared after reading).
+    Each change includes the property name, new value, and timestamp.
+
+    Use observe_property() first to start monitoring properties.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("get_observed_changes")
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            total = data.get("total_changes", 0)
+            obs_count = data.get("observer_count", 0)
+            changes = data.get("changes", {})
+
+            if obs_count == 0:
+                return "No active observers. Use observe_property() to start monitoring."
+
+            if total == 0:
+                return f"No changes detected ({obs_count} active observers)."
+
+            output = f"Property Changes ({total} total, {obs_count} observers):\n\n"
+            for key, events in changes.items():
+                output += f"  {key}:\n"
+                for evt in events[-20:]:  # Show last 20 per observer
+                    output += f"    [{evt.get('time', '?')}] {evt.get('property', '?')} = {evt.get('value', '?')}\n"
+                if len(events) > 20:
+                    output += f"    ... ({len(events) - 20} more)\n"
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error getting property changes: {str(e)}")
+        return f"Error getting property changes: {str(e)}"
+
+
+# ==============================================================================
+# Phase 9: Undo-Clean Parameter Control (M4L Bridge)
+# ==============================================================================
+
+@mcp.tool()
+def set_parameter_clean(
+    ctx: Context,
+    track_index: int,
+    device_index: int,
+    parameter_index: int,
+    value: float,
+) -> str:
+    """Set a device parameter via the M4L bridge with minimal undo impact.
+
+    Unlike set_device_parameter (which goes through the Remote Script and creates
+    a full undo entry), this routes through the M4L bridge for a lighter touch.
+    Useful for automation-style continuous parameter changes where you don't want
+    to pollute the undo history.
+
+    Parameters:
+    - track_index: The track containing the device
+    - device_index: The device index on the track
+    - parameter_index: The LOM parameter index (use discover_device_params to find indices)
+    - value: The value to set (will be clamped to parameter min/max)
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        _validate_index(track_index, "track_index")
+        _validate_index(device_index, "device_index")
+        _validate_index(parameter_index, "parameter_index")
+
+        m4l = get_m4l_connection()
+        result = m4l.send_command("set_param_clean", {
+            "track_index": track_index,
+            "device_index": device_index,
+            "parameter_index": parameter_index,
+            "value": float(value),
+        })
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            output = (
+                f"Parameter '{data.get('parameter_name', '?')}' "
+                f"set to {data.get('actual_value', '?')}"
+            )
+            if data.get("was_clamped"):
+                output += f" (clamped from {data.get('requested_value', '?')})"
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ValueError as e:
+        return f"Invalid input: {e}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error setting parameter cleanly: {str(e)}")
+        return f"Error setting parameter cleanly: {str(e)}"
+
+
+# ==============================================================================
+# Phase 5: Audio Analysis (M4L Bridge)
+# ==============================================================================
+
+@mcp.tool()
+def analyze_track_audio(ctx: Context, track_index: int = -1) -> str:
+    """Analyze audio levels on any track (cross-track meter reading).
+
+    Returns output meter levels (left/right) from the LOM for the target track,
+    plus MSP-derived RMS/peak data if the Max patch has audio analysis objects
+    connected (MSP data always comes from the device's own track).
+
+    Parameters:
+        track_index: Track to analyze (0-based). Default -1 = the track where
+                     the M4L bridge device is loaded. Use -2 for master track.
+                     Any track index 0+ reads that track's meters remotely.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("analyze_audio", {"track_index": track_index})
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+            target = data.get("target_track_index", -1)
+            track_label = data.get("track_name", f"track {target}")
+            if target == -2:
+                track_label = data.get("track_name", "Master")
+            output = f"Audio Analysis ({track_label}):\n"
+
+            if "output_meter_left" in data:
+                output += f"  Output Meter L: {data['output_meter_left']:.4f}\n"
+            if "output_meter_right" in data:
+                output += f"  Output Meter R: {data['output_meter_right']:.4f}\n"
+            if "output_meter_peak_left" in data:
+                output += f"  Peak Level: {data['output_meter_peak_left']:.4f}\n"
+
+            if data.get("has_msp_data"):
+                output += f"\n  MSP Analysis from device track (age: {data.get('msp_data_age_ms', '?')}ms):\n"
+                output += f"    RMS L: {data.get('rms_left', 0):.4f}  R: {data.get('rms_right', 0):.4f}\n"
+                output += f"    Peak L: {data.get('peak_left', 0):.4f}  R: {data.get('peak_right', 0):.4f}\n"
+            else:
+                note = data.get("note", "")
+                if note:
+                    output += f"\n  Note: {note}\n"
+
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error analyzing audio: {str(e)}")
+        return f"Error analyzing audio: {str(e)}"
+
+
+@mcp.tool()
+def analyze_track_spectrum(ctx: Context) -> str:
+    """Get spectral analysis data from the track where the M4L Audio Effect bridge is loaded.
+
+    Returns frequency band magnitudes (8-band via fffb~ filter bank), dominant band,
+    and spectral centroid. The M4L device must be an Audio Effect (not MIDI Effect)
+    with plugin~ -> fffb~ 8 -> snapshot~ -> pack -> prepend spectrum_data -> [js] wired.
+
+    If no spectral data is available, returns instructions for setting up the analysis.
+
+    Requires the AbletonMCP_Bridge M4L Audio Effect device to be loaded on a track.
+    """
+    try:
+        m4l = get_m4l_connection()
+        result = m4l.send_command("analyze_spectrum")
+
+        if result.get("status") == "success":
+            data = result.get("result", {})
+
+            if not data.get("has_spectrum"):
+                return data.get("note", "No spectral data available. Set up fft~ in the Max patch.")
+
+            output = "Spectral Analysis:\n"
+            output += f"  Bins: {data.get('bin_count', 0)}\n"
+            output += f"  Dominant bin: {data.get('dominant_bin', '?')} (magnitude: {data.get('dominant_magnitude', 0):.4f})\n"
+            output += f"  Spectral centroid: {data.get('spectral_centroid', 0):.2f}\n"
+            output += f"  Data age: {data.get('data_age_ms', '?')}ms\n"
+
+            return output
+        return f"M4L bridge error: {result.get('message', 'Unknown error')}"
+    except ConnectionError as e:
+        return f"M4L bridge not available: {e}"
+    except Exception as e:
+        logger.error(f"Error analyzing spectrum: {str(e)}")
+        return f"Error analyzing spectrum: {str(e)}"
 
 
 # ==============================================================================

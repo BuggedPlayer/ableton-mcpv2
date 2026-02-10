@@ -35,7 +35,7 @@ from elevenlabs_mcp.utils import (
 from elevenlabs_mcp.convai import create_conversation_config, create_platform_settings
 from elevenlabs.types.knowledge_base_locator import KnowledgeBaseLocator
 
-from elevenlabs import play
+from elevenlabs.play import play
 from elevenlabs_mcp import __version__
 
 if load_dotenv is not None:
@@ -279,14 +279,19 @@ def get_voice(voice_id: str) -> McpVoice:
 def voice_clone(
     name: str, files: list[str], description: str = None
 ) -> TextContent:
-    input_files = [str(handle_input_file(file).absolute()) for file in files]
-    voice = _get_client().clone(name=name, description=description, files=input_files)
+    input_files = [open(str(handle_input_file(file).absolute()), "rb") for file in files]
+    try:
+        response = _get_client().voices.ivc.create(
+            name=name,
+            description=description,
+            files=input_files,
+        )
+    finally:
+        for f in input_files:
+            f.close()
     return TextContent(
         type="text",
-        text=f"""Voice cloned successfully: Name: {voice.name}
-        ID: {voice.voice_id}
-        Category: {voice.category}
-        Description: {voice.description or "N/A"}""",
+        text=f"Voice cloned successfully: ID: {response.voice_id}",
     )
 
 
@@ -607,7 +612,7 @@ def create_voice_from_preview(
     voice_name: str,
     voice_description: str,
 ) -> TextContent:
-    voice = _get_client().text_to_voice.create_voice_from_preview(
+    voice = _get_client().text_to_voice.create(
         voice_name=voice_name,
         voice_description=voice_description,
         generated_voice_id=generated_voice_id,
