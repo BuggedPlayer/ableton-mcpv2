@@ -429,6 +429,115 @@ class M4LConnection:
                 ("i", params.get("wait_ms", 500)),
                 ("s", request_id),
             ])
+        # --- Phase 10: App Version Detection ---
+        elif command_type == "get_app_version":
+            return self._build_osc_message("/get_app_version", [("s", request_id)])
+        # --- Phase 11: Automation State Introspection ---
+        elif command_type == "get_automation_states":
+            return self._build_osc_message("/get_automation_states", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", request_id),
+            ])
+        # --- Phase F1: Wire orphaned chain OSC builders ---
+        elif command_type == "discover_chains":
+            extra = params.get("extra_path", "")
+            osc_args = [("i", params["track_index"]), ("i", params["device_index"])]
+            if extra:
+                osc_args.append(("s", extra))
+            osc_args.append(("s", request_id))
+            return self._build_osc_message("/discover_chains", osc_args)
+        elif command_type == "get_chain_device_params":
+            return self._build_osc_message("/get_chain_device_params", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("i", params["chain_device_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_chain_device_param":
+            return self._build_osc_message("/set_chain_device_param", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("i", params["chain_device_index"]),
+                ("i", params["parameter_index"]),
+                ("f", params["value"]),
+                ("s", request_id),
+            ])
+        # --- Phase 12: Note Surgery by ID ---
+        elif command_type == "get_clip_notes_by_id":
+            return self._build_osc_message("/get_clip_notes_by_id", [
+                ("i", params["track_index"]),
+                ("i", params["clip_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "modify_clip_notes":
+            mods_json = json.dumps(params["modifications"], separators=(",", ":"))
+            mods_b64 = base64.urlsafe_b64encode(mods_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/modify_clip_notes", [
+                ("i", params["track_index"]),
+                ("i", params["clip_index"]),
+                ("s", mods_b64),
+                ("s", request_id),
+            ])
+        elif command_type == "remove_clip_notes_by_id":
+            ids_json = json.dumps(params["note_ids"], separators=(",", ":"))
+            ids_b64 = base64.urlsafe_b64encode(ids_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/remove_clip_notes_by_id", [
+                ("i", params["track_index"]),
+                ("i", params["clip_index"]),
+                ("s", ids_b64),
+                ("s", request_id),
+            ])
+        # --- Phase 13: Chain-Level Mixing ---
+        elif command_type == "get_chain_mixing":
+            return self._build_osc_message("/get_chain_mixing", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_chain_mixing":
+            props_json = json.dumps(params["properties"], separators=(",", ":"))
+            props_b64 = base64.urlsafe_b64encode(props_json.encode("utf-8")).decode("ascii").rstrip("=")
+            return self._build_osc_message("/set_chain_mixing", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("i", params["chain_index"]),
+                ("s", props_b64),
+                ("s", request_id),
+            ])
+        # --- Phase 14: Device AB Comparison ---
+        elif command_type == "device_ab_compare":
+            return self._build_osc_message("/device_ab_compare", [
+                ("i", params["track_index"]),
+                ("i", params["device_index"]),
+                ("s", params["action"]),
+                ("s", request_id),
+            ])
+        # --- Phase 15: Clip Scrubbing ---
+        elif command_type == "clip_scrub":
+            return self._build_osc_message("/clip_scrub", [
+                ("i", params["track_index"]),
+                ("i", params["clip_index"]),
+                ("s", params["action"]),
+                ("f", params.get("beat_time", 0.0)),
+                ("s", request_id),
+            ])
+        # --- Phase 16: Split Stereo Panning ---
+        elif command_type == "get_split_stereo":
+            return self._build_osc_message("/get_split_stereo", [
+                ("i", params["track_index"]),
+                ("s", request_id),
+            ])
+        elif command_type == "set_split_stereo":
+            return self._build_osc_message("/set_split_stereo", [
+                ("i", params["track_index"]),
+                ("f", params["left"]),
+                ("f", params["right"]),
+                ("s", request_id),
+            ])
         else:
             raise ValueError(f"Unknown M4L command: {command_type}")
 
@@ -5439,6 +5548,426 @@ def analyze_cross_track_audio(ctx: Context, track_index: int, wait_ms: int = 500
 
     output += f"\n  Send restored to: {data.get('original_send_value', 0):.4f}\n"
     return output
+
+
+# ==============================================================================
+# M4L Bridge v3.3.0 — New Tools (App Version, Automation States, Chain Discovery)
+# ==============================================================================
+
+@mcp.tool()
+@_tool_handler("getting Ableton version")
+def get_ableton_version(ctx: Context) -> str:
+    """Get the Ableton Live application version via M4L bridge.
+
+    Returns major, minor, bugfix version numbers and display string.
+    Useful for version-gating features (e.g. AB comparison requires Live 12.3+).
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+    """
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_app_version")
+    data = _m4l_result(result)
+    display = data.get("display", "Unknown")
+    vs = data.get("version_string")
+    if vs:
+        return f"{display} ({vs})"
+    return display
+
+
+@mcp.tool()
+@_tool_handler("getting automation states")
+def get_automation_states(ctx: Context, track_index: int, device_index: int) -> str:
+    """Get automation state for all parameters of a device via M4L bridge.
+
+    Returns only parameters that have automation (state > 0).
+    States: 0=none, 1=active, 2=overridden (manually changed after automation was written).
+
+    Use this to check which parameters have automation before modifying them,
+    or to detect overridden automation that may need re-enabling.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device to inspect
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_automation_states", {
+        "track_index": track_index,
+        "device_index": device_index,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("discovering device chains via M4L")
+def discover_chains_m4l(ctx: Context, track_index: int, device_index: int, extra_path: str = "") -> str:
+    """Discover chains in a rack device via M4L bridge with enhanced detail.
+
+    Returns chain hierarchy including:
+    - Regular chains with their devices
+    - Return chains (Rack-level sends, e.g. Instrument Rack return chains)
+    - Drum pad details: in_note, out_note, choke_group, mute, solo
+
+    Use extra_path to navigate nested racks (e.g. "chains 0 devices 1").
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+
+    Parameters:
+    - track_index: The index of the track containing the rack device
+    - device_index: The index of the rack device
+    - extra_path: Additional LOM path to navigate into nested racks (optional)
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("discover_chains", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "extra_path": extra_path,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("getting chain device parameters via M4L")
+def get_chain_device_params_m4l(ctx: Context, track_index: int, device_index: int, chain_index: int, chain_device_index: int) -> str:
+    """Discover ALL parameters (including hidden/non-automatable) of a device inside a rack chain.
+
+    Uses M4L bridge to access the full LOM parameter tree of a device nested
+    inside a chain of a rack (Instrument Rack, Audio Effect Rack, Drum Rack, etc.).
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+    - chain_index: The index of the chain within the rack
+    - chain_device_index: The index of the device within the chain
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    _validate_index(chain_index, "chain_index")
+    _validate_index(chain_device_index, "chain_device_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_chain_device_params", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "chain_index": chain_index,
+        "chain_device_index": chain_device_index,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("setting chain device parameter via M4L")
+def set_chain_device_param_m4l(ctx: Context, track_index: int, device_index: int, chain_index: int, chain_device_index: int, parameter_index: int, value: float) -> str:
+    """Set a parameter value on a device inside a rack chain via M4L bridge.
+
+    Allows setting any parameter (including hidden/non-automatable) on devices
+    nested inside rack chains. Use get_chain_device_params_m4l() first to discover
+    available parameters and their valid ranges.
+
+    Requires the AbletonMCP_Bridge M4L device to be loaded on any track.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+    - chain_index: The index of the chain within the rack
+    - chain_device_index: The index of the device within the chain
+    - parameter_index: The index of the parameter to set
+    - value: The value to set the parameter to (must be within min/max range)
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    _validate_index(chain_index, "chain_index")
+    _validate_index(chain_device_index, "chain_device_index")
+    _validate_index(parameter_index, "parameter_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("set_chain_device_param", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "chain_index": chain_index,
+        "chain_device_index": chain_device_index,
+        "parameter_index": parameter_index,
+        "value": value,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+# ==============================================================================
+# M4L Bridge v3.6.0 — Note Surgery, Chain Mixing, AB Compare, Scrub, Stereo
+# ==============================================================================
+
+@mcp.tool()
+@_tool_handler("getting clip notes with IDs")
+def get_clip_notes_with_ids(ctx: Context, track_index: int, clip_index: int) -> str:
+    """Get all MIDI notes in a clip with stable note IDs via M4L bridge.
+
+    Returns notes with unique note_id fields that can be used for in-place
+    editing via modify_clip_notes() or surgical removal via remove_clip_notes_by_id().
+    Each note includes: note_id, pitch, start_time, duration, velocity, mute,
+    probability, velocity_deviation, release_velocity.
+
+    Requires the AbletonMCP_Bridge M4L device. Live 11+ required for note IDs.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the MIDI clip
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(clip_index, "clip_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_clip_notes_by_id", {
+        "track_index": track_index,
+        "clip_index": clip_index,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("modifying clip notes by ID")
+def modify_clip_notes(ctx: Context, track_index: int, clip_index: int, modifications: str) -> str:
+    """Modify MIDI notes in-place by their stable note ID via M4L bridge.
+
+    Performs non-destructive in-place editing — no remove+re-add needed.
+    Use get_clip_notes_with_ids() first to get note IDs.
+
+    Each modification dict must include 'note_id' and any properties to change:
+    pitch, start_time, duration, velocity, mute, probability, velocity_deviation, release_velocity.
+
+    Requires the AbletonMCP_Bridge M4L device. Live 11+ required.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the MIDI clip
+    - modifications: JSON string of list of note modification dicts, each with 'note_id' and changed properties.
+      Example: '[{"note_id": 1, "velocity": 100}, {"note_id": 5, "pitch": 64, "start_time": 2.0}]'
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(clip_index, "clip_index")
+    mods = json.loads(modifications) if isinstance(modifications, str) else modifications
+    m4l = get_m4l_connection()
+    result = m4l.send_command("modify_clip_notes", {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "modifications": mods,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("removing clip notes by ID")
+def remove_clip_notes_by_id(ctx: Context, track_index: int, clip_index: int, note_ids: str) -> str:
+    """Remove specific MIDI notes by their stable note ID via M4L bridge.
+
+    Surgical note removal — only removes the exact notes specified by ID.
+    Use get_clip_notes_with_ids() first to get note IDs.
+
+    Requires the AbletonMCP_Bridge M4L device. Live 11+ required.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot containing the MIDI clip
+    - note_ids: JSON string of list of note IDs to remove. Example: '[1, 5, 12]'
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(clip_index, "clip_index")
+    ids = json.loads(note_ids) if isinstance(note_ids, str) else note_ids
+    m4l = get_m4l_connection()
+    result = m4l.send_command("remove_clip_notes_by_id", {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "note_ids": ids,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("getting chain mixing state")
+def get_chain_mixing(ctx: Context, track_index: int, device_index: int, chain_index: int) -> str:
+    """Get mixing state (volume, pan, sends, mute, solo) of a chain in a rack device via M4L bridge.
+
+    Returns the ChainMixerDevice properties: volume, panning, chain_activator (mute),
+    sends, plus the chain's mute and solo state. Critical for Drum Rack pad balancing
+    and Instrument Rack chain mixing.
+
+    Requires the AbletonMCP_Bridge M4L device.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device (Instrument Rack, Audio Effect Rack, Drum Rack)
+    - chain_index: The index of the chain within the rack
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    _validate_index(chain_index, "chain_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_chain_mixing", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "chain_index": chain_index,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("setting chain mixing state")
+def set_chain_mixing(ctx: Context, track_index: int, device_index: int, chain_index: int, properties: str) -> str:
+    """Set mixing properties on a chain in a rack device via M4L bridge.
+
+    Set any combination of: volume, panning, chain_activator (1=active, 0=muted),
+    mute (0/1), solo (0/1), sends (array of {index, value}).
+
+    Requires the AbletonMCP_Bridge M4L device.
+
+    Parameters:
+    - track_index: The index of the track containing the rack
+    - device_index: The index of the rack device
+    - chain_index: The index of the chain within the rack
+    - properties: JSON string with mixing properties to set.
+      Example: '{"volume": 0.8, "panning": -0.5, "mute": 0, "sends": [{"index": 0, "value": 0.5}]}'
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    _validate_index(chain_index, "chain_index")
+    props = json.loads(properties) if isinstance(properties, str) else properties
+    m4l = get_m4l_connection()
+    result = m4l.send_command("set_chain_mixing", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "chain_index": chain_index,
+        "properties": props,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("comparing device AB presets")
+def device_ab_compare(ctx: Context, track_index: int, device_index: int, action: str) -> str:
+    """Compare device presets using AB comparison via M4L bridge (Live 12.3+).
+
+    Save device state to A/B slots for instant comparison during sound design.
+    Actions:
+    - 'get_state': Check if AB comparison is supported and which slot is active
+    - 'save': Save current device state to the other AB slot
+    - 'toggle': Toggle between A and B presets
+
+    Requires the AbletonMCP_Bridge M4L device and Ableton Live 12.3+.
+
+    Parameters:
+    - track_index: The index of the track containing the device
+    - device_index: The index of the device
+    - action: 'get_state', 'save', or 'toggle'
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(device_index, "device_index")
+    if action not in ("get_state", "save", "toggle"):
+        return "action must be 'get_state', 'save', or 'toggle'"
+    m4l = get_m4l_connection()
+    result = m4l.send_command("device_ab_compare", {
+        "track_index": track_index,
+        "device_index": device_index,
+        "action": action,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("scrubbing clip")
+def clip_scrub(ctx: Context, track_index: int, clip_index: int, action: str, beat_time: float = 0.0) -> str:
+    """Scrub within a clip at a specific beat position via M4L bridge.
+
+    Performs quantized clip scrubbing (like mouse scrubbing in Ableton) —
+    respects Global Quantization, loops in time with transport.
+    Different from navigate_playback(scrub_by) which moves the global transport.
+
+    Actions:
+    - 'scrub': Start scrubbing at the given beat_time (continues until stop_scrub)
+    - 'stop_scrub': Stop scrubbing
+
+    Requires the AbletonMCP_Bridge M4L device.
+
+    Parameters:
+    - track_index: The index of the track containing the clip
+    - clip_index: The index of the clip slot
+    - action: 'scrub' or 'stop_scrub'
+    - beat_time: The beat position to scrub to (only for 'scrub' action)
+    """
+    _validate_index(track_index, "track_index")
+    _validate_index(clip_index, "clip_index")
+    if action not in ("scrub", "stop_scrub"):
+        return "action must be 'scrub' or 'stop_scrub'"
+    m4l = get_m4l_connection()
+    result = m4l.send_command("clip_scrub", {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "action": action,
+        "beat_time": beat_time,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("getting split stereo panning")
+def get_split_stereo(ctx: Context, track_index: int) -> str:
+    """Get the split stereo panning values (left and right) for a track via M4L bridge.
+
+    Returns the Left Split Stereo and Right Split Stereo DeviceParameter values
+    from the track's mixer_device. These control independent L/R panning when
+    split stereo mode is enabled.
+
+    Requires the AbletonMCP_Bridge M4L device.
+
+    Parameters:
+    - track_index: The index of the track
+    """
+    _validate_index(track_index, "track_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("get_split_stereo", {
+        "track_index": track_index,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
+
+
+@mcp.tool()
+@_tool_handler("setting split stereo panning")
+def set_split_stereo(ctx: Context, track_index: int, left: float, right: float) -> str:
+    """Set the split stereo panning values (left and right) for a track via M4L bridge.
+
+    Sets the Left Split Stereo and Right Split Stereo DeviceParameter values
+    on the track's mixer_device.
+
+    Requires the AbletonMCP_Bridge M4L device.
+
+    Parameters:
+    - track_index: The index of the track
+    - left: Left channel pan value (typically -1.0 to 1.0)
+    - right: Right channel pan value (typically -1.0 to 1.0)
+    """
+    _validate_index(track_index, "track_index")
+    m4l = get_m4l_connection()
+    result = m4l.send_command("set_split_stereo", {
+        "track_index": track_index,
+        "left": left,
+        "right": right,
+    })
+    data = _m4l_result(result)
+    return json.dumps(data)
 
 
 # ==============================================================================

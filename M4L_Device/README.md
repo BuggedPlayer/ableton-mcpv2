@@ -1,9 +1,11 @@
-# AbletonMCP Max for Live Bridge (v3.2.0)
+# AbletonMCP Max for Live Bridge (v3.6.0)
 
-Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Now an **Audio Effect** device (upgraded from MIDI Effect) — enabling real-time audio analysis via `plugin~`. Adds **24 tools** for:
+Optional deep Live Object Model (LOM) access that extends the standard AbletonMCP Remote Script. Now an **Audio Effect** device (upgraded from MIDI Effect) — enabling real-time audio analysis via `plugin~`. Adds **38 tools** for:
 
 - Hidden/non-automatable parameters on any Ableton device
 - Device chain navigation inside Instrument Racks, Audio Effect Racks, and Drum Racks
+- Enhanced chain discovery with return chains and drum pad properties (in_note, out_note, choke_group)
+- Chain device parameter discovery and control (including hidden parameters inside rack chains)
 - Simpler/Sample deep access (markers, warp settings, slices)
 - Wavetable modulation matrix control
 - Cue points & arrangement locators
@@ -12,6 +14,13 @@ Optional deep Live Object Model (LOM) access that extends the standard AbletonMC
 - Undo-clean parameter control
 - Audio analysis (cross-track meter levels + MSP spectral data)
 - Cross-track MSP analysis via send-based routing (RMS, peak, spectrum from any track)
+- Application version detection (enables version-gating for features)
+- Automation state introspection (detect active/overridden automation per parameter)
+- Note surgery by stable note ID (in-place edit without destructive remove+add)
+- Chain-level mixing (volume, pan, sends, mute/solo per rack chain)
+- Device AB comparison (save/toggle A/B presets, Live 12.3+)
+- Clip scrubbing (quantized scrub within a clip, like mouse scrubbing)
+- Split stereo panning (independent left/right pan control)
 
 ## What It Adds
 
@@ -28,13 +37,22 @@ Optional deep Live Object Model (LOM) access that extends the standard AbletonMC
 | Undo-clean parameter sets | No | **Yes** |
 | Audio analysis (any track meters) | No | **Yes** (LOM cross-track) |
 | Spectral analysis (8-band) | No | **Yes** (fffb~ filter bank) |
+| App version detection | No | **Yes** (LiveAPI) |
+| Automation state introspection | No | **Yes** (per-parameter) |
+| Return chains (rack sends) | No | **Yes** |
+| Drum pad in_note/out_note/choke | No | **Yes** |
+| Note editing by stable ID | No | **Yes** (in-place, non-destructive) |
+| Chain-level mixing (volume/pan/sends) | No | **Yes** (ChainMixerDevice) |
+| Device AB comparison | No | **Yes** (Live 12.3+) |
+| Clip scrubbing (quantized) | No | **Yes** (Clip.scrub) |
+| Split stereo panning | No | **Yes** (L/R independent) |
 
 ## How It Works
 
 ```
 MCP Server
   ├── TCP :9877 → Remote Script (192 tools)
-  └── UDP :9878 / :9879 → M4L Bridge (24 tools, OSC protocol)
+  └── UDP :9878 / :9879 → M4L Bridge (38 tools, 41 OSC commands)
 ```
 
 The server sends OSC commands with typed arguments. The M4L device processes them via the Live Object Model and returns URL-safe base64-encoded JSON responses. Large responses (>1.5KB) are automatically chunked into ~3.6KB UDP packets and reassembled by the server.
@@ -161,7 +179,7 @@ If you need to build the device from scratch (e.g., for a different Ableton vers
 
 The device was originally a MIDI Effect, but `plugin~` in a MIDI Effect receives **no audio** — it sits before the instrument in the signal chain, so there's nothing to analyze. As an Audio Effect, `plugin~` taps the post-instrument audio signal, enabling real-time RMS/peak measurement and spectral analysis.
 
-All 29 OSC commands, LiveAPI access, observers, and cross-track meter reading work identically in both device types. The only difference is that MSP audio analysis (`plugin~`, `peakamp~`, `fffb~`) now actually receives audio.
+All 41 OSC commands, LiveAPI access, observers, and cross-track meter reading work identically in both device types. The only difference is that MSP audio analysis (`plugin~`, `peakamp~`, `fffb~`) now actually receives audio.
 
 ### Loading the Device
 
@@ -175,7 +193,7 @@ All 29 OSC commands, LiveAPI access, observers, and cross-track meter reading wo
 Use the `m4l_status` MCP tool to check if the bridge is connected:
 
 ```
-m4l_status()  →  "M4L bridge connected (v3.2.0)"
+m4l_status()  →  "M4L bridge connected (v3.6.0)"
 ```
 
 ## Available MCP Tools (When Bridge Is Loaded)
@@ -249,7 +267,56 @@ m4l_status()  →  "M4L bridge connected (v3.2.0)"
 |---|---|
 | `analyze_track_audio(track_index?)` | Get LOM meter levels for **any track** (cross-track). Optional `track_index`: -1=own track (default), 0+=specific track, -2=master |
 | `analyze_track_spectrum()` | Get 8-band spectral data from fffb~ filter bank (device's own track) |
-| `analyze_cross_track_audio(track_index, wait_ms?)` | **v3.2.0** Real MSP analysis (RMS, peak, 8-band spectrum) from **any track** via send-based routing. Device must be on a return track. |
+| `analyze_cross_track_audio(track_index, wait_ms?)` | **v3.6.0** Real MSP analysis (RMS, peak, 8-band spectrum) from **any track** via send-based routing. Device must be on a return track. |
+
+### App Version & Automation (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `get_ableton_version()` | Get Live version (major, minor, bugfix, display string). Enables version-gating for features like AB comparison (Live 12.3+) |
+| `get_automation_states(track, device)` | Get automation state for all device parameters. Returns only params with automation: 0=none, 1=active, 2=overridden |
+
+### Enhanced Chain Discovery (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `discover_chains_m4l(track, device, extra_path?)` | Discover rack chains with enhanced detail: return chains, drum pad in_note/out_note/choke_group |
+| `get_chain_device_params_m4l(track, device, chain, chain_device)` | Discover ALL parameters (including hidden) of a device inside a rack chain |
+| `set_chain_device_param_m4l(track, device, chain, chain_device, param, value)` | Set any parameter on a device inside a rack chain |
+
+### Note Surgery by ID (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `get_clip_notes_with_ids(track, clip)` | Get all MIDI notes with stable note IDs for in-place editing |
+| `modify_clip_notes(track, clip, modifications)` | Non-destructive in-place note editing by ID (velocity, pitch, timing, probability) |
+| `remove_clip_notes_by_id(track, clip, note_ids)` | Surgical note removal — only removes exact notes by ID |
+
+### Chain-Level Mixing (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `get_chain_mixing(track, device, chain)` | Read chain mixer state: volume, pan, sends, mute, solo, chain_activator |
+| `set_chain_mixing(track, device, chain, properties)` | Set any combination of chain mixing props (volume, panning, sends, mute, solo) |
+
+### Device AB Comparison (v3.6.0, Live 12.3+)
+
+| Tool | Description |
+|---|---|
+| `device_ab_compare(track, device, action)` | AB preset comparison: get_state, save, or toggle between A/B slots |
+
+### Clip Scrubbing (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `clip_scrub(track, clip, action, beat_time?)` | Quantized clip scrubbing (scrub / stop_scrub). Respects Global Quantization |
+
+### Split Stereo Panning (v3.6.0)
+
+| Tool | Description |
+|---|---|
+| `get_split_stereo(track)` | Read left/right split stereo pan values |
+| `set_split_stereo(track, left, right)` | Set independent L/R panning for a track |
 
 ## Troubleshooting
 
@@ -289,7 +356,7 @@ m4l_status()  →  "M4L bridge connected (v3.2.0)"
   - The Max patch objects (`udpreceive` and `udpsend`)
   - `server.py` (`M4LConnection` class: `send_port` and `recv_port`)
 
-## OSC Commands Reference (v3.2.0)
+## OSC Commands Reference (v3.6.0)
 
 | Address | Arguments | Description |
 |---|---|---|
@@ -319,6 +386,17 @@ m4l_status()  →  "M4L bridge connected (v3.2.0)"
 | `/analyze_audio` | `track_index, request_id` | Get audio meter levels + MSP data. `track_index`: -1=own, 0+=specific, -2=master |
 | `/analyze_spectrum` | `request_id` | Get spectral analysis data (8-band fffb~) |
 | `/analyze_cross_track` | `track_index, wait_ms, request_id` | Cross-track MSP analysis via send routing. Device must be on return track |
+| `/get_app_version` | `request_id` | **v3.6.0** Get Ableton Live major/minor/bugfix version |
+| `/get_automation_states` | `track_idx, device_idx, request_id` | **v3.6.0** Get automation_state (0=none, 1=active, 2=overridden) for all device parameters |
+| `/get_clip_notes_by_id` | `track_idx, clip_idx, request_id` | **v3.6.0** Get all MIDI notes with stable note IDs |
+| `/modify_clip_notes` | `track_idx, clip_idx, modifications_b64, request_id` | **v3.6.0** In-place modify notes by ID (base64 JSON) |
+| `/remove_clip_notes_by_id` | `track_idx, clip_idx, note_ids_b64, request_id` | **v3.6.0** Remove notes by ID (base64 JSON) |
+| `/get_chain_mixing` | `track_idx, device_idx, chain_idx, request_id` | **v3.6.0** Read chain mixer state |
+| `/set_chain_mixing` | `track_idx, device_idx, chain_idx, props_b64, request_id` | **v3.6.0** Set chain mixer properties (base64 JSON) |
+| `/device_ab_compare` | `track_idx, device_idx, action, request_id` | **v3.6.0** AB comparison: get_state/save/toggle (Live 12.3+) |
+| `/clip_scrub` | `track_idx, clip_idx, action, beat_time, request_id` | **v3.6.0** Quantized clip scrub (scrub/stop_scrub) |
+| `/get_split_stereo` | `track_idx, request_id` | **v3.6.0** Read L/R split stereo pan values |
+| `/set_split_stereo` | `track_idx, left_val, right_val, request_id` | **v3.6.0** Set L/R split stereo pan values |
 
 ## Technical Notes
 

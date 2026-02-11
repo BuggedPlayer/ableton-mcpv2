@@ -4,6 +4,56 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.8.0 — 2026-02-11
+
+### M4L Bridge v3.6.0 — 9 new M4L tools (bridge: 32 → 41 OSC commands)
+
+#### Note Surgery by ID (3 tools — M4L-exclusive, Live 11+)
+- `get_clip_notes_with_ids` — get all MIDI notes with stable note IDs for in-place editing
+- `modify_clip_notes` — non-destructive in-place note editing by ID (velocity, pitch, timing, probability)
+- `remove_clip_notes_by_id` — surgical note removal by ID (no range-based collateral)
+
+#### Chain-Level Mixing (2 tools — M4L-exclusive)
+- `get_chain_mixing` — read volume, pan, sends, mute, solo of a rack chain's mixer_device
+- `set_chain_mixing` — set any combination of chain mixing properties (Drum Rack balancing, Instrument Rack mixing)
+
+#### Device AB Comparison (1 tool — Live 12.3+)
+- `device_ab_compare` — save/toggle/query AB preset comparison slots on any device
+
+#### Clip Scrubbing (1 tool — M4L-exclusive)
+- `clip_scrub` — quantized scrubbing within a clip (like mouse scrubbing, respects Global Quantization)
+
+#### Split Stereo Panning (2 tools — M4L-exclusive)
+- `get_split_stereo` — read left/right split stereo pan values
+- `set_split_stereo` — set independent L/R panning for a track
+
+### Total tools: 221 → **230** (+9) + **19 optional** (ElevenLabs) = **249 total**
+
+---
+
+## v2.7.1 — 2026-02-11
+
+### M4L Bridge v3.3.0 — 5 new M4L tools (bridge: 29 → 32 OSC commands)
+
+#### App Version Detection (1 tool)
+- `get_ableton_version` — read Ableton Live major/minor/bugfix version via M4L LiveAPI. Enables version-gating for features like AB comparison (Live 12.3+)
+
+#### Automation State Introspection (1 tool)
+- `get_automation_states` — read automation_state (none/active/overridden) for all parameters of a device. M4L-exclusive — no TCP equivalent. Detects overridden automation before modifying parameters
+
+#### Chain Discovery via M4L (3 tools — wired existing orphaned JS handlers)
+- `discover_chains_m4l` — discover rack chains with enhanced detail: return chains, drum pad in_note/out_note/choke_group
+- `get_chain_device_params_m4l` — discover ALL parameters (including hidden) of a device inside a rack chain
+- `set_chain_device_param_m4l` — set any parameter on a device inside a rack chain
+
+#### Enhanced Chain Discovery
+- **Return chains**: `discoverChainsAtPath()` now enumerates return_chains (Rack-level sends) with their devices
+- **Drum pad properties**: Added in_note, out_note, choke_group to drum pad enumeration
+
+### Total tools: 216 → **221** (+5) + **19 optional** (ElevenLabs) = **240 total**
+
+---
+
 ## v2.7.0 — 2026-02-10
 
 ### New Features: 19 new tools + 5 extended existing tools

@@ -21,7 +21,7 @@ outlets = 1;
 // Initialization
 // ---------------------------------------------------------------------------
 function loadbang() {
-    post("AbletonMCP Beta M4L Bridge v3.2.0 starting...\n");
+    post("AbletonMCP Beta M4L Bridge v3.6.0 starting...\n");
     post("Listening for OSC commands on port 9878.\n");
     post("Dashboard: http://127.0.0.1:9880\n");
 }
@@ -173,6 +173,57 @@ function anything() {
             handleAnalyzeCrossTrack(args);
             break;
 
+        // --- Phase 10: App Version Detection ---
+        case "get_app_version":
+            handleGetAppVersion(args);
+            break;
+
+        // --- Phase 11: Automation State Introspection ---
+        case "get_automation_states":
+            handleGetAutomationStates(args);
+            break;
+
+        // --- Phase 12: Note Surgery by ID ---
+        case "get_clip_notes_by_id":
+            handleGetClipNotesById(args);
+            break;
+
+        case "modify_clip_notes":
+            handleModifyClipNotes(args);
+            break;
+
+        case "remove_clip_notes_by_id":
+            handleRemoveClipNotesById(args);
+            break;
+
+        // --- Phase 13: Chain-Level Mixing ---
+        case "get_chain_mixing":
+            handleGetChainMixing(args);
+            break;
+
+        case "set_chain_mixing":
+            handleSetChainMixing(args);
+            break;
+
+        // --- Phase 14: Device AB Comparison ---
+        case "device_ab_compare":
+            handleDeviceAbCompare(args);
+            break;
+
+        // --- Phase 15: Clip Scrubbing ---
+        case "clip_scrub":
+            handleClipScrub(args);
+            break;
+
+        // --- Phase 16: Split Stereo Panning ---
+        case "get_split_stereo":
+            handleGetSplitStereo(args);
+            break;
+
+        case "set_split_stereo":
+            handleSetSplitStereo(args);
+            break;
+
         default:
             post("AbletonMCP Beta Bridge: unknown command: '" + cmd + "' (raw: '" + addr + "')\n");
             break;
@@ -188,10 +239,118 @@ function handlePing(args) {
     var requestId = (args.length > 0) ? args[0].toString() : "";
     var response = {
         status: "success",
-        result: { m4l_bridge: true, version: "3.2.0" },
+        result: { m4l_bridge: true, version: "3.6.0" },
         id: requestId
     };
     sendResponse(JSON.stringify(response));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10: Application Version Detection
+// ---------------------------------------------------------------------------
+
+function handleGetAppVersion(args) {
+    // args: [request_id (string)]
+    var requestId = (args.length > 0) ? args[0].toString() : "";
+
+    try {
+        var app = new LiveAPI(null, "live_app");
+        if (!app || !app.id || parseInt(app.id) === 0) {
+            sendError("Cannot access live_app object", requestId);
+            return;
+        }
+
+        var result = {};
+        try { result.major = parseInt(app.call("get_major_version")); } catch (e) { result.major = null; }
+        try { result.minor = parseInt(app.call("get_minor_version")); } catch (e) { result.minor = null; }
+        try { result.bugfix = parseInt(app.call("get_bugfix_version")); } catch (e) { result.bugfix = null; }
+        try {
+            var vs = app.get("version");
+            result.version_string = (vs !== undefined && vs !== null) ? vs.toString() : null;
+        } catch (e) { result.version_string = null; }
+
+        // Build display string
+        if (result.major !== null && result.minor !== null && result.bugfix !== null) {
+            result.display = "Ableton Live " + result.major + "." + result.minor + "." + result.bugfix;
+        }
+
+        sendResult(result, requestId);
+    } catch (e) {
+        sendError("Failed to get app version: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 11: Automation State Introspection
+//
+// DeviceParameter.automation_state:
+//   0 = none (no automation envelope)
+//   1 = active (automation present and active)
+//   2 = overridden (automation present but manually overridden)
+// ---------------------------------------------------------------------------
+
+function handleGetAutomationStates(args) {
+    // args: [track_index (int), device_index (int), request_id (string)]
+    if (args.length < 3) {
+        sendError("get_automation_states requires track_index, device_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var requestId = args[2].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi = new LiveAPI(null, devicePath);
+
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    var deviceName = "";
+    try { deviceName = deviceApi.get("name").toString(); } catch (e) {}
+    var deviceClass = "";
+    try { deviceClass = deviceApi.get("class_name").toString(); } catch (e) {}
+
+    var paramCount = 0;
+    try { paramCount = parseInt(deviceApi.getcount("parameters")); } catch (e) {}
+
+    // Use chunked reading to avoid overloading LiveAPI
+    // Read automation_state for all parameters, only include non-zero (has automation)
+    var CHUNK_SIZE = 4;
+    var automatedParams = [];
+    var cursor = new LiveAPI(null, devicePath);
+
+    for (var i = 0; i < paramCount; i++) {
+        cursor.goto(devicePath + " parameters " + i);
+        if (!cursor.id || parseInt(cursor.id) === 0) continue;
+
+        try {
+            var state = parseInt(cursor.get("automation_state"));
+            if (state > 0) {
+                var paramInfo = {
+                    index: i,
+                    automation_state: state,
+                    state_name: (state === 1) ? "active" : (state === 2) ? "overridden" : "unknown"
+                };
+                try { paramInfo.name = cursor.get("name").toString(); } catch (e2) {}
+                try { paramInfo.value = parseFloat(cursor.get("value")); } catch (e2) {}
+                try { paramInfo.min = parseFloat(cursor.get("min")); } catch (e2) {}
+                try { paramInfo.max = parseFloat(cursor.get("max")); } catch (e2) {}
+                automatedParams.push(paramInfo);
+            }
+        } catch (e) {
+            // Some parameters may not support automation_state — skip silently
+        }
+    }
+
+    sendResult({
+        device_name: deviceName,
+        device_class: deviceClass,
+        parameter_count: paramCount,
+        automated_parameters: automatedParams,
+        automated_count: automatedParams.length
+    }, requestId);
 }
 
 function handleDiscoverParams(args) {
@@ -650,6 +809,39 @@ function discoverChainsAtPath(devicePath) {
     result.chains = chains;
     result.chain_count = chains.length;
 
+    // Enumerate return chains (Rack-level return chains, e.g. Instrument Rack sends)
+    var returnChainCount = 0;
+    try { returnChainCount = parseInt(deviceApi.getcount("return_chains")); } catch (e) {}
+    if (returnChainCount > 0) {
+        var returnChains = [];
+        for (var rc = 0; rc < returnChainCount; rc++) {
+            var rcPath = devicePath + " return_chains " + rc;
+            cursor.goto(rcPath);
+            if (!cursor.id || parseInt(cursor.id) === 0) continue;
+
+            var rcInfo = { index: rc, name: "" };
+            try { rcInfo.name = cursor.get("name").toString(); } catch (e) {}
+
+            // Enumerate devices in this return chain
+            var rcDevCount = 0;
+            try { rcDevCount = parseInt(cursor.getcount("devices")); } catch (e) {}
+            var rcDevices = [];
+            for (var rcd = 0; rcd < rcDevCount; rcd++) {
+                innerCursor.goto(rcPath + " devices " + rcd);
+                if (!innerCursor.id || parseInt(innerCursor.id) === 0) continue;
+                var rcdInfo = { index: rcd, name: "", class_name: "" };
+                try { rcdInfo.name = innerCursor.get("name").toString(); } catch (e) {}
+                try { rcdInfo.class_name = innerCursor.get("class_name").toString(); } catch (e) {}
+                rcDevices.push(rcdInfo);
+            }
+            rcInfo.devices = rcDevices;
+            rcInfo.device_count = rcDevices.length;
+            returnChains.push(rcInfo);
+        }
+        result.return_chains = returnChains;
+        result.return_chain_count = returnChains.length;
+    }
+
     // Enumerate drum pads (only if this is a Drum Rack)
     if (hasDrumPads) {
         var drumPads = [];
@@ -671,6 +863,9 @@ function discoverChainsAtPath(devicePath) {
             try { padInfo.note = parseInt(cursor.get("note")); } catch (e) {}
             try { padInfo.mute = (parseInt(cursor.get("mute")) === 1); } catch (e) {}
             try { padInfo.solo = (parseInt(cursor.get("solo")) === 1); } catch (e) {}
+            try { padInfo.in_note = parseInt(cursor.get("in_note")); } catch (e) {}
+            try { padInfo.out_note = parseInt(cursor.get("out_note")); } catch (e) {}
+            try { padInfo.choke_group = parseInt(cursor.get("choke_group")); } catch (e) {}
 
             // Get devices in the first chain of this pad
             if (padChainCount > 0) {
@@ -1465,6 +1660,606 @@ function handleSetDeviceProperty(args) {
 
     var result = setDeviceProperty(trackIdx, deviceIdx, propertyName, value);
     sendResult(result, requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12: Note Surgery by ID (M4L-exclusive — in-place editing via stable note IDs)
+//
+// LiveAPI call() for dict-returning functions:
+//   In Max JS, call() on get_notes_extended returns a flattened array of
+//   key-value pairs. We parse this into note objects with note_id.
+//   apply_note_modifications takes {"notes": [...]} dict.
+//   remove_notes_by_id takes a list of note IDs.
+// ---------------------------------------------------------------------------
+
+function _getClipApi(trackIdx, clipIdx) {
+    var clipPath = "live_set tracks " + trackIdx + " clip_slots " + clipIdx + " clip";
+    var clipApi = new LiveAPI(null, clipPath);
+    if (!clipApi || !clipApi.id || parseInt(clipApi.id) === 0) {
+        return null;
+    }
+    return clipApi;
+}
+
+function _parseNotesFromCall(rawResult) {
+    // LiveAPI call() for get_notes_extended/get_all_notes_extended returns
+    // data in various formats depending on Max version. We handle:
+    // 1. If it's already a JS object/array (Max 12+)
+    // 2. If it's a flattened key-value string array from LiveAPI
+    // 3. If it's a dict reference string
+    if (!rawResult) return [];
+
+    // If rawResult has a "notes" key directly (Dict-like return)
+    if (typeof rawResult === "object" && rawResult.notes) {
+        return rawResult.notes;
+    }
+
+    // If it's a string, try JSON parse
+    if (typeof rawResult === "string") {
+        try {
+            var parsed = JSON.parse(rawResult);
+            if (parsed && parsed.notes) return parsed.notes;
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {}
+    }
+
+    // If it's an array (flattened from LiveAPI), parse key-value pairs
+    if (rawResult && typeof rawResult === "object" && rawResult.length !== undefined) {
+        var arr = [];
+        for (var i = 0; i < rawResult.length; i++) {
+            arr.push(rawResult[i]);
+        }
+        // Try to detect if this is a Dict reference
+        if (arr.length === 2 && arr[0] === "notes") {
+            // Might be a dict name reference — try Dict access
+            try {
+                var d = new Dict();
+                d.parse(rawResult.toString());
+                if (d.contains("notes")) {
+                    var notesArr = [];
+                    var count = d.getsize("notes");
+                    for (var ni = 0; ni < count; ni++) {
+                        var note = d.get("notes[" + ni + "]");
+                        if (note) notesArr.push(note);
+                    }
+                    return notesArr;
+                }
+            } catch (e2) {}
+        }
+        return arr;
+    }
+
+    return [];
+}
+
+function handleGetClipNotesById(args) {
+    // args: [track_index (int), clip_index (int), request_id (string)]
+    if (args.length < 3) {
+        sendError("get_clip_notes_by_id requires track_index, clip_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var clipIdx   = parseInt(args[1]);
+    var requestId = args[2].toString();
+
+    var clipApi = _getClipApi(trackIdx, clipIdx);
+    if (!clipApi) {
+        sendError("No clip at track " + trackIdx + " slot " + clipIdx, requestId);
+        return;
+    }
+
+    try {
+        // Check this is a MIDI clip
+        var isMidi = false;
+        try { isMidi = (parseInt(clipApi.get("is_midi_clip")) === 1); } catch (e) {}
+        if (!isMidi) {
+            sendError("Clip is not a MIDI clip", requestId);
+            return;
+        }
+
+        // Use get_notes_extended to get notes with IDs
+        // Args order: from_pitch, pitch_span, from_time, time_span
+        var rawNotes = clipApi.call("get_notes_extended", 0, 128, 0.0, 99999.0);
+
+        // Parse the result — handling multiple return formats
+        var notes = _parseNotesFromCall(rawNotes);
+
+        // Get clip info
+        var clipName = "";
+        try { clipName = clipApi.get("name").toString(); } catch (e) {}
+        var clipLength = 4.0;
+        try { clipLength = parseFloat(clipApi.get("length")); } catch (e) {}
+
+        sendResult({
+            clip_name: clipName,
+            clip_length: clipLength,
+            note_count: notes.length,
+            notes: notes,
+            has_note_ids: true
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to get clip notes with IDs: " + e.toString(), requestId);
+    }
+}
+
+function handleModifyClipNotes(args) {
+    // args: [track_index (int), clip_index (int), modifications_b64 (string), request_id (string)]
+    if (args.length < 4) {
+        sendError("modify_clip_notes requires track_index, clip_index, modifications_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var clipIdx   = parseInt(args[1]);
+    var modsB64   = args[2].toString();
+    var requestId = args[3].toString();
+
+    var clipApi = _getClipApi(trackIdx, clipIdx);
+    if (!clipApi) {
+        sendError("No clip at track " + trackIdx + " slot " + clipIdx, requestId);
+        return;
+    }
+
+    var modsJson;
+    try { modsJson = _base64decode(modsB64); } catch (e) {
+        sendError("Failed to decode modifications base64: " + e.toString(), requestId);
+        return;
+    }
+
+    var modifications;
+    try { modifications = JSON.parse(modsJson); } catch (e) {
+        sendError("Failed to parse modifications JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    try {
+        // apply_note_modifications expects {"notes": [...]} dict
+        var notesList = modifications;
+        if (!Array.isArray(notesList) && notesList.notes) {
+            notesList = notesList.notes;
+        }
+
+        clipApi.call("apply_note_modifications", {"notes": notesList});
+
+        sendResult({
+            modified_count: Array.isArray(notesList) ? notesList.length : 0,
+            status: "applied"
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to apply note modifications: " + e.toString(), requestId);
+    }
+}
+
+function handleRemoveClipNotesById(args) {
+    // args: [track_index (int), clip_index (int), note_ids_b64 (string), request_id (string)]
+    if (args.length < 4) {
+        sendError("remove_clip_notes_by_id requires track_index, clip_index, note_ids_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var clipIdx   = parseInt(args[1]);
+    var idsB64    = args[2].toString();
+    var requestId = args[3].toString();
+
+    var clipApi = _getClipApi(trackIdx, clipIdx);
+    if (!clipApi) {
+        sendError("No clip at track " + trackIdx + " slot " + clipIdx, requestId);
+        return;
+    }
+
+    var idsJson;
+    try { idsJson = _base64decode(idsB64); } catch (e) {
+        sendError("Failed to decode note_ids base64: " + e.toString(), requestId);
+        return;
+    }
+
+    var noteIds;
+    try { noteIds = JSON.parse(idsJson); } catch (e) {
+        sendError("Failed to parse note_ids JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    try {
+        // remove_notes_by_id takes a list of note IDs
+        clipApi.call("remove_notes_by_id", noteIds);
+
+        sendResult({
+            removed_count: Array.isArray(noteIds) ? noteIds.length : 0,
+            status: "removed"
+        }, requestId);
+    } catch (e) {
+        sendError("Failed to remove notes by ID: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13: Chain-Level Mixing
+//
+// Chain.mixer_device → ChainMixerDevice with:
+//   volume (DeviceParameter), panning (DeviceParameter),
+//   sends (list of DeviceParameter), chain_activator (DeviceParameter = mute)
+// ---------------------------------------------------------------------------
+
+function handleGetChainMixing(args) {
+    // args: [track_idx, device_idx, chain_idx, request_id]
+    if (args.length < 4) {
+        sendError("get_chain_mixing requires track_index, device_index, chain_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var chainIdx  = parseInt(args[2]);
+    var requestId = args[3].toString();
+
+    var chainPath = "live_set tracks " + trackIdx + " devices " + deviceIdx + " chains " + chainIdx;
+    var chainApi = new LiveAPI(null, chainPath);
+    if (!chainApi || !chainApi.id || parseInt(chainApi.id) === 0) {
+        sendError("No chain at " + chainPath, requestId);
+        return;
+    }
+
+    try {
+        var result = {};
+        try { result.name = chainApi.get("name").toString(); } catch (e) {}
+        try { result.color = parseInt(chainApi.get("color")); } catch (e) {}
+        try { result.mute = (parseInt(chainApi.get("mute")) === 1); } catch (e) {}
+        try { result.solo = (parseInt(chainApi.get("solo")) === 1); } catch (e) {}
+
+        // Navigate to mixer_device
+        var mixerPath = chainPath + " mixer_device";
+        var mixerApi = new LiveAPI(null, mixerPath);
+
+        if (mixerApi && mixerApi.id && parseInt(mixerApi.id) !== 0) {
+            // Volume
+            var volPath = mixerPath + " volume";
+            var volApi = new LiveAPI(null, volPath);
+            if (volApi && volApi.id && parseInt(volApi.id) !== 0) {
+                result.volume = {};
+                try { result.volume.value = parseFloat(volApi.get("value")); } catch (e) {}
+                try { result.volume.min = parseFloat(volApi.get("min")); } catch (e) {}
+                try { result.volume.max = parseFloat(volApi.get("max")); } catch (e) {}
+                try { result.volume.name = volApi.get("name").toString(); } catch (e) {}
+            }
+
+            // Panning
+            var panPath = mixerPath + " panning";
+            var panApi = new LiveAPI(null, panPath);
+            if (panApi && panApi.id && parseInt(panApi.id) !== 0) {
+                result.panning = {};
+                try { result.panning.value = parseFloat(panApi.get("value")); } catch (e) {}
+                try { result.panning.min = parseFloat(panApi.get("min")); } catch (e) {}
+                try { result.panning.max = parseFloat(panApi.get("max")); } catch (e) {}
+            }
+
+            // Chain activator (mute toggle via device parameter)
+            var actPath = mixerPath + " chain_activator";
+            var actApi = new LiveAPI(null, actPath);
+            if (actApi && actApi.id && parseInt(actApi.id) !== 0) {
+                result.chain_activator = {};
+                try { result.chain_activator.value = parseFloat(actApi.get("value")); } catch (e) {}
+            }
+
+            // Sends
+            var sendCount = 0;
+            try { sendCount = parseInt(mixerApi.getcount("sends")); } catch (e) {}
+            if (sendCount > 0) {
+                var sends = [];
+                var sendCursor = new LiveAPI(null, mixerPath);
+                for (var s = 0; s < sendCount; s++) {
+                    sendCursor.goto(mixerPath + " sends " + s);
+                    if (!sendCursor.id || parseInt(sendCursor.id) === 0) continue;
+                    var sendInfo = { index: s };
+                    try { sendInfo.value = parseFloat(sendCursor.get("value")); } catch (e) {}
+                    try { sendInfo.min = parseFloat(sendCursor.get("min")); } catch (e) {}
+                    try { sendInfo.max = parseFloat(sendCursor.get("max")); } catch (e) {}
+                    try { sendInfo.name = sendCursor.get("name").toString(); } catch (e) {}
+                    sends.push(sendInfo);
+                }
+                result.sends = sends;
+            }
+        }
+
+        sendResult(result, requestId);
+    } catch (e) {
+        sendError("Failed to get chain mixing: " + e.toString(), requestId);
+    }
+}
+
+function handleSetChainMixing(args) {
+    // args: [track_idx, device_idx, chain_idx, props_b64, request_id]
+    if (args.length < 5) {
+        sendError("set_chain_mixing requires track_index, device_index, chain_index, props_b64, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var chainIdx  = parseInt(args[2]);
+    var propsB64  = args[3].toString();
+    var requestId = args[4].toString();
+
+    var propsJson;
+    try { propsJson = _base64decode(propsB64); } catch (e) {
+        sendError("Failed to decode props base64: " + e.toString(), requestId);
+        return;
+    }
+    var props;
+    try { props = JSON.parse(propsJson); } catch (e) {
+        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        return;
+    }
+
+    var chainPath = "live_set tracks " + trackIdx + " devices " + deviceIdx + " chains " + chainIdx;
+    var mixerPath = chainPath + " mixer_device";
+    var changes = {};
+
+    try {
+        // Volume
+        if (props.volume !== undefined) {
+            var volApi = new LiveAPI(null, mixerPath + " volume");
+            if (volApi && volApi.id && parseInt(volApi.id) !== 0) {
+                volApi.set("value", parseFloat(props.volume));
+                changes.volume = parseFloat(props.volume);
+            }
+        }
+
+        // Panning
+        if (props.panning !== undefined) {
+            var panApi = new LiveAPI(null, mixerPath + " panning");
+            if (panApi && panApi.id && parseInt(panApi.id) !== 0) {
+                panApi.set("value", parseFloat(props.panning));
+                changes.panning = parseFloat(props.panning);
+            }
+        }
+
+        // Chain activator (1=active/unmuted, 0=deactivated/muted)
+        if (props.chain_activator !== undefined) {
+            var actApi = new LiveAPI(null, mixerPath + " chain_activator");
+            if (actApi && actApi.id && parseInt(actApi.id) !== 0) {
+                actApi.set("value", parseFloat(props.chain_activator));
+                changes.chain_activator = parseFloat(props.chain_activator);
+            }
+        }
+
+        // Sends (array of {index, value} or just {send_0: value, send_1: value})
+        if (props.sends !== undefined) {
+            var sendChanges = [];
+            if (Array.isArray(props.sends)) {
+                for (var si = 0; si < props.sends.length; si++) {
+                    var sendSpec = props.sends[si];
+                    var sendIdx = sendSpec.index !== undefined ? sendSpec.index : si;
+                    var sendApi = new LiveAPI(null, mixerPath + " sends " + sendIdx);
+                    if (sendApi && sendApi.id && parseInt(sendApi.id) !== 0) {
+                        sendApi.set("value", parseFloat(sendSpec.value));
+                        sendChanges.push({ index: sendIdx, value: parseFloat(sendSpec.value) });
+                    }
+                }
+            }
+            changes.sends = sendChanges;
+        }
+
+        // Mute/solo on the chain itself (not mixer_device)
+        if (props.mute !== undefined) {
+            var chainApi = new LiveAPI(null, chainPath);
+            chainApi.set("mute", parseInt(props.mute));
+            changes.mute = parseInt(props.mute);
+        }
+        if (props.solo !== undefined) {
+            var chainApi2 = new LiveAPI(null, chainPath);
+            chainApi2.set("solo", parseInt(props.solo));
+            changes.solo = parseInt(props.solo);
+        }
+
+        sendResult({ changes: changes, status: "applied" }, requestId);
+    } catch (e) {
+        sendError("Failed to set chain mixing: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14: Device AB Comparison (Live 12.3+)
+//
+// Device.can_compare_ab (bool, Get/Observe)
+// Device.is_using_compare_preset_b (bool, Get/Observe)
+// Device.save_preset_to_compare_ab_slot() (Call)
+// ---------------------------------------------------------------------------
+
+function handleDeviceAbCompare(args) {
+    // args: [track_idx, device_idx, action (string), request_id]
+    if (args.length < 4) {
+        sendError("device_ab_compare requires track_index, device_index, action, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var deviceIdx = parseInt(args[1]);
+    var action    = args[2].toString();
+    var requestId = args[3].toString();
+
+    var devicePath = "live_set tracks " + trackIdx + " devices " + deviceIdx;
+    var deviceApi = new LiveAPI(null, devicePath);
+    if (!deviceApi || !deviceApi.id || parseInt(deviceApi.id) === 0) {
+        sendError("No device at track " + trackIdx + " device " + deviceIdx, requestId);
+        return;
+    }
+
+    try {
+        // Check if AB comparison is supported
+        var canAB = false;
+        try { canAB = (parseInt(deviceApi.get("can_compare_ab")) === 1); } catch (e) {
+            sendError("AB comparison not available (requires Live 12.3+)", requestId);
+            return;
+        }
+
+        if (!canAB) {
+            sendError("This device does not support AB comparison", requestId);
+            return;
+        }
+
+        if (action === "get_state") {
+            var result = {};
+            result.can_compare_ab = true;
+            try { result.is_using_b = (parseInt(deviceApi.get("is_using_compare_preset_b")) === 1); } catch (e) { result.is_using_b = null; }
+            try { result.device_name = deviceApi.get("name").toString(); } catch (e) {}
+            sendResult(result, requestId);
+
+        } else if (action === "save") {
+            // Save current state to the other slot (toggles A↔B storage)
+            deviceApi.call("save_preset_to_compare_ab_slot");
+            var isB = false;
+            try { isB = (parseInt(deviceApi.get("is_using_compare_preset_b")) === 1); } catch (e) {}
+            sendResult({
+                status: "saved",
+                is_using_b: isB,
+                note: "Saved current state to the other AB slot"
+            }, requestId);
+
+        } else if (action === "toggle") {
+            // Toggle between A and B presets
+            // In Live, toggling is done by the AB button which switches is_using_compare_preset_b
+            // From the API, we call save_preset_to_compare_ab_slot to swap
+            deviceApi.call("save_preset_to_compare_ab_slot");
+            var isB2 = false;
+            try { isB2 = (parseInt(deviceApi.get("is_using_compare_preset_b")) === 1); } catch (e) {}
+            sendResult({
+                status: "toggled",
+                is_using_b: isB2
+            }, requestId);
+
+        } else {
+            sendError("Unknown AB compare action: " + action + " (use get_state, save, or toggle)", requestId);
+        }
+    } catch (e) {
+        sendError("AB comparison failed: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 15: Clip Scrubbing (M4L-exclusive)
+//
+// Clip.scrub(beat_time) — quantized scrubbing within a clip
+// Clip.stop_scrub() — stop scrubbing
+// Different from Song.scrub_by which moves global transport
+// ---------------------------------------------------------------------------
+
+function handleClipScrub(args) {
+    // args: [track_idx, clip_idx, action (string), beat_time (float), request_id]
+    if (args.length < 5) {
+        sendError("clip_scrub requires track_index, clip_index, action, beat_time, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var clipIdx   = parseInt(args[1]);
+    var action    = args[2].toString();
+    var beatTime  = parseFloat(args[3]);
+    var requestId = args[4].toString();
+
+    var clipApi = _getClipApi(trackIdx, clipIdx);
+    if (!clipApi) {
+        sendError("No clip at track " + trackIdx + " slot " + clipIdx, requestId);
+        return;
+    }
+
+    try {
+        if (action === "scrub") {
+            clipApi.call("scrub", beatTime);
+            sendResult({ status: "scrubbing", beat_time: beatTime }, requestId);
+
+        } else if (action === "stop_scrub") {
+            clipApi.call("stop_scrub");
+            sendResult({ status: "stopped" }, requestId);
+
+        } else {
+            sendError("Unknown clip_scrub action: " + action + " (use scrub or stop_scrub)", requestId);
+        }
+    } catch (e) {
+        sendError("Clip scrub failed: " + e.toString(), requestId);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 16: Split Stereo Panning (M4L-exclusive)
+//
+// Track.mixer_device.left_split_stereo (DeviceParameter)
+// Track.mixer_device.right_split_stereo (DeviceParameter)
+// ---------------------------------------------------------------------------
+
+function handleGetSplitStereo(args) {
+    // args: [track_idx, request_id]
+    if (args.length < 2) {
+        sendError("get_split_stereo requires track_index, request_id", "");
+        return;
+    }
+    var trackIdx  = parseInt(args[0]);
+    var requestId = args[1].toString();
+
+    var basePath = "live_set tracks " + trackIdx + " mixer_device";
+
+    try {
+        var result = {};
+
+        var leftApi = new LiveAPI(null, basePath + " left_split_stereo");
+        if (leftApi && leftApi.id && parseInt(leftApi.id) !== 0) {
+            result.left = {};
+            try { result.left.value = parseFloat(leftApi.get("value")); } catch (e) {}
+            try { result.left.min = parseFloat(leftApi.get("min")); } catch (e) {}
+            try { result.left.max = parseFloat(leftApi.get("max")); } catch (e) {}
+            try { result.left.name = leftApi.get("name").toString(); } catch (e) {}
+        }
+
+        var rightApi = new LiveAPI(null, basePath + " right_split_stereo");
+        if (rightApi && rightApi.id && parseInt(rightApi.id) !== 0) {
+            result.right = {};
+            try { result.right.value = parseFloat(rightApi.get("value")); } catch (e) {}
+            try { result.right.min = parseFloat(rightApi.get("min")); } catch (e) {}
+            try { result.right.max = parseFloat(rightApi.get("max")); } catch (e) {}
+            try { result.right.name = rightApi.get("name").toString(); } catch (e) {}
+        }
+
+        if (!result.left && !result.right) {
+            sendError("Split stereo not available on track " + trackIdx, requestId);
+            return;
+        }
+
+        sendResult(result, requestId);
+    } catch (e) {
+        sendError("Failed to get split stereo: " + e.toString(), requestId);
+    }
+}
+
+function handleSetSplitStereo(args) {
+    // args: [track_idx, left_value (float), right_value (float), request_id]
+    if (args.length < 4) {
+        sendError("set_split_stereo requires track_index, left_value, right_value, request_id", "");
+        return;
+    }
+    var trackIdx   = parseInt(args[0]);
+    var leftValue  = parseFloat(args[1]);
+    var rightValue = parseFloat(args[2]);
+    var requestId  = args[3].toString();
+
+    var basePath = "live_set tracks " + trackIdx + " mixer_device";
+    var changes = {};
+
+    try {
+        var leftApi = new LiveAPI(null, basePath + " left_split_stereo");
+        if (leftApi && leftApi.id && parseInt(leftApi.id) !== 0) {
+            leftApi.set("value", leftValue);
+            changes.left = leftValue;
+        }
+
+        var rightApi = new LiveAPI(null, basePath + " right_split_stereo");
+        if (rightApi && rightApi.id && parseInt(rightApi.id) !== 0) {
+            rightApi.set("value", rightValue);
+            changes.right = rightValue;
+        }
+
+        if (Object.keys(changes).length === 0) {
+            sendError("Split stereo not available on track " + trackIdx, requestId);
+            return;
+        }
+
+        sendResult({ changes: changes, status: "applied" }, requestId);
+    } catch (e) {
+        sendError("Failed to set split stereo: " + e.toString(), requestId);
+    }
 }
 
 // ---------------------------------------------------------------------------
