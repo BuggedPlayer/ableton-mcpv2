@@ -52,7 +52,7 @@ def add_notes_extended(song, track_index, clip_index, notes, ctrl=None):
                     "pitch": max(0, min(127, int(n.get("pitch", 60)))),
                     "start_time": max(0.0, float(n.get("start_time", 0.0))),
                     "duration": max(0.01, float(n.get("duration", 0.25))),
-                    "velocity": max(1, min(127, float(n.get("velocity", 100)))),
+                    "velocity": max(1, min(127, int(n.get("velocity", 100)))),
                     "mute": bool(n.get("mute", False)),
                 }
                 if "probability" in n:
@@ -391,17 +391,17 @@ def capture_midi(song, ctrl=None):
 
 
 def apply_groove(song, track_index, clip_index, groove_amount, ctrl=None):
-    """Apply groove to a MIDI clip."""
+    """Apply groove amount (sets global song.groove_amount, validates clip exists)."""
     try:
-        clip = _get_midi_clip(song, track_index, clip_index)
-        if hasattr(clip, "groove_amount"):
-            clip.groove_amount = groove_amount
-        else:
-            raise Exception("Groove amount not available on this clip")
+        _get_midi_clip(song, track_index, clip_index)  # validate clip exists
+        groove_amount = float(groove_amount)
+        if groove_amount < 0.0 or groove_amount > 1.0:
+            raise ValueError("groove_amount must be 0.0-1.0, got {0}".format(groove_amount))
+        song.groove_amount = groove_amount
         return {
             "track_index": track_index,
             "clip_index": clip_index,
-            "groove_amount": groove_amount,
+            "groove_amount": song.groove_amount,
         }
     except Exception as e:
         if ctrl:

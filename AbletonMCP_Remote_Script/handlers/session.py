@@ -163,6 +163,7 @@ def get_loop_info(song, ctrl=None):
 def set_loop_start(song, position, ctrl=None):
     """Set the loop start position."""
     try:
+        position = max(0.0, float(position))
         song.loop_start = position
         return {"loop_start": song.loop_start, "loop_end": song.loop_start + song.loop_length}
     except Exception as e:
@@ -219,7 +220,7 @@ def set_playback_position(song, position, ctrl=None):
 def set_arrangement_overdub(song, enabled, ctrl=None):
     """Enable or disable arrangement overdub mode."""
     try:
-        song.arrangement_overdub = enabled
+        song.arrangement_overdub = bool(enabled)
         return {"arrangement_overdub": song.arrangement_overdub}
     except Exception as e:
         if ctrl:
@@ -297,7 +298,7 @@ def get_recording_status(song, ctrl=None):
 def set_metronome(song, enabled, ctrl=None):
     """Enable or disable the metronome."""
     try:
-        song.metronome = enabled
+        song.metronome = bool(enabled)
         return {"metronome": song.metronome}
     except Exception as e:
         if ctrl:

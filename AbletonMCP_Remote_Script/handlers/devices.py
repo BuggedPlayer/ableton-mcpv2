@@ -247,8 +247,11 @@ def set_device_parameters_batch(
         results = []
         for entry in parameters:
             pname = entry.get("name", "")
-            pvalue = entry.get("value", 0.0)
             value_display = entry.get("value_display")
+            if "value" not in entry and value_display is None:
+                results.append({"name": pname, "error": "missing value or value_display"})
+                continue
+            pvalue = entry.get("value", 0.0)
             target = param_map.get(pname)
             if target is None:
                 results.append({"name": pname, "error": "not found"})
@@ -283,15 +286,20 @@ def set_device_parameters_batch(
         raise
 
 
-def delete_device(song, track_index, device_index, ctrl=None):
+def _resolve_device(song, track_index, device_index, track_type="track"):
+    """Resolve a track and device by index, supporting track/return/master."""
+    track = resolve_track(song, track_index, track_type)
+    devices = list(track.devices)
+    if device_index < 0 or device_index >= len(devices):
+        raise IndexError("Device index {0} out of range (have {1} devices)".format(
+            device_index, len(devices)))
+    return track, devices[device_index]
+
+
+def delete_device(song, track_index, device_index, track_type="track", ctrl=None):
     """Delete a device from a track."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if device_index < 0 or device_index >= len(track.devices):
-            raise IndexError("Device index out of range")
-        device = track.devices[device_index]
+        track, device = _resolve_device(song, track_index, device_index, track_type)
         device_name = device.name
         track.delete_device(device_index)
         return {
@@ -309,15 +317,10 @@ def delete_device(song, track_index, device_index, ctrl=None):
 # --- Macro helpers (new from MacWhite) ---
 
 
-def get_macro_values(song, track_index, device_index, ctrl=None):
+def get_macro_values(song, track_index, device_index, track_type="track", ctrl=None):
     """Get the values of all macro controls on a rack device."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if device_index < 0 or device_index >= len(track.devices):
-            raise IndexError("Device index out of range")
-        device = track.devices[device_index]
+        track, device = _resolve_device(song, track_index, device_index, track_type)
         if not hasattr(device, "macros_mapped"):
             raise Exception("Device is not a rack (no macros)")
 
@@ -347,15 +350,10 @@ def get_macro_values(song, track_index, device_index, ctrl=None):
         raise
 
 
-def set_macro_value(song, track_index, device_index, macro_index, value, ctrl=None):
+def set_macro_value(song, track_index, device_index, macro_index, value, track_type="track", ctrl=None):
     """Set the value of a specific macro control on a rack device."""
     try:
-        if track_index < 0 or track_index >= len(song.tracks):
-            raise IndexError("Track index out of range")
-        track = song.tracks[track_index]
-        if device_index < 0 or device_index >= len(track.devices):
-            raise IndexError("Device index out of range")
-        device = track.devices[device_index]
+        track, device = _resolve_device(song, track_index, device_index, track_type)
         if not hasattr(device, "macros_mapped"):
             raise Exception("Device is not a rack (no macros)")
         if macro_index < 0 or macro_index > 7:
@@ -1336,9 +1334,13 @@ def control_looper(song, track_index, device_index, action, clip_slot_index=None
         elif action == "export":
             if clip_slot_index is None:
                 raise ValueError("clip_slot_index is required for export action")
-            clip_slot = track.clip_slots[int(clip_slot_index)]
+            idx = int(clip_slot_index)
+            if idx < 0 or idx >= len(track.clip_slots):
+                raise ValueError("clip_slot_index {0} out of range (0-{1})".format(
+                    idx, len(track.clip_slots) - 1))
+            clip_slot = track.clip_slots[idx]
             device.export_to_clip_slot(clip_slot)
-            result["clip_slot_index"] = int(clip_slot_index)
+            result["clip_slot_index"] = idx
         else:
             raise ValueError(
                 "action must be 'record', 'overdub', 'play', 'stop', 'clear', 'undo', "
