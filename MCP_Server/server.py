@@ -826,7 +826,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             # Step 1: Load from disk (instant, works even before Ableton connects)
             disk_loaded = _load_browser_cache_from_disk()
             if disk_loaded:
-                logger.info("Browser cache ready from disk (background refresh will follow)")
+                # Skip live rescan if disk cache is fresh enough
+                age = time.time() - _browser_cache_timestamp
+                if age < _BROWSER_DISK_CACHE_MAX_AGE:
+                    logger.info("Browser cache ready from disk (%.0fs old, skipping rescan)", age)
+                    return
+                logger.info("Browser cache loaded from disk (%.0fs old, will refresh)", age)
 
             # Step 2: Wait for Ableton, then do a live scan to refresh
             time.sleep(5)  # let Ableton & Remote Script fully settle
@@ -994,12 +999,12 @@ _M4L_PING_CACHE_TTL = 5.0
 _browser_cache_flat: List[Dict[str, Any]] = []  # flat list for fast substring search
 _browser_cache_by_category: Dict[str, List[Dict[str, Any]]] = {}  # display_name -> items (index for filtered search)
 _browser_cache_timestamp: float = 0.0
-_BROWSER_CACHE_TTL = 300.0  # 5 minutes
+_BROWSER_CACHE_TTL = 604800.0  # 7 days — only refresh_browser_cache forces a rescan
 _browser_cache_lock = threading.Lock()
 _browser_cache_populating = False  # prevents duplicate scans
 _BROWSER_DISK_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".ableton-mcp")
 _BROWSER_DISK_CACHE_PATH = os.path.join(_BROWSER_DISK_CACHE_DIR, "browser_cache.json")
-_BROWSER_DISK_CACHE_MAX_AGE = 86400.0  # 24 hours — disk cache ignored if older
+_BROWSER_DISK_CACHE_MAX_AGE = 604800.0  # 7 days — disk cache ignored if older
 
 # Dynamic device URI map — built from browser cache after each scan.
 # Maps lowercase device name -> correct URI from Ableton's LOM.
@@ -1281,11 +1286,7 @@ def _populate_browser_cache(force: bool = False) -> bool:
 
 
 def _get_browser_cache() -> List[Dict[str, Any]]:
-    """Get the flat browser cache, populating if needed."""
-    with _browser_cache_lock:
-        if _browser_cache_flat and (time.time() - _browser_cache_timestamp) < _BROWSER_CACHE_TTL:
-            return _browser_cache_flat
-    _populate_browser_cache()
+    """Get the flat browser cache. Use refresh_browser_cache to force a rescan."""
     with _browser_cache_lock:
         return _browser_cache_flat
 
