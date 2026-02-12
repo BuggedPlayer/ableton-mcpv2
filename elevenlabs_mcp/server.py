@@ -12,6 +12,7 @@ Tools without cost warnings in their description are free to use as they only re
 """
 
 import httpx
+import logging
 import os
 import base64
 from datetime import datetime
@@ -37,6 +38,8 @@ from elevenlabs.types.knowledge_base_locator import KnowledgeBaseLocator
 
 from elevenlabs.play import play
 from elevenlabs_mcp import __version__
+
+logger = logging.getLogger("ElevenLabs-MCP")
 
 if load_dotenv is not None:
     try:
@@ -760,8 +763,8 @@ def play_audio(input_file_path: str) -> TextContent:
 
 
 def main():
-    print("Starting MCP server")
-    """Run the MCP server"""
+    """Run the MCP server."""
+    logger.info("Starting ElevenLabs MCP server")
     mcp.run()
 
 

@@ -24,8 +24,9 @@ HOST = "localhost"
 # -----------------------------------------------------------------------
 # Command routing tables
 # -----------------------------------------------------------------------
-# Commands that modify Live's state must run on the main thread via
-# schedule_message + queue.  Read-only commands run on the socket thread.
+# Both modifying and read-only commands are dispatched on Ableton's main
+# thread via schedule_message + queue (Live API is not thread-safe).
+# The distinction controls timeout behaviour and future optimisation.
 # -----------------------------------------------------------------------
 
 MODIFYING_COMMANDS = {
@@ -161,6 +162,7 @@ class AbletonMCP(ControlSurface):
         # UDP real-time parameter server
         self.udp_sock = None
         self.udp_thread = None
+        self.udp_running = False
 
         # Start the socket servers
         self.start_server()
@@ -180,6 +182,7 @@ class AbletonMCP(ControlSurface):
         """Called when Ableton closes or the control surface is removed"""
         self.log_message("AbletonMCP Beta disconnecting...")
         self.running = False
+        self.udp_running = False
 
         # Close all client sockets so their threads can exit
         for sock in self.client_sockets[:]:
@@ -253,17 +256,19 @@ class AbletonMCP(ControlSurface):
             self.udp_sock.bind((HOST, UDP_REALTIME_PORT))
             self.udp_sock.settimeout(1.0)
 
+            self.udp_running = True
             self.udp_thread = threading.Thread(target=self._udp_server_loop)
             self.udp_thread.daemon = True
             self.udp_thread.start()
 
             self.log_message("UDP real-time server started on port " + str(UDP_REALTIME_PORT))
         except Exception as e:
+            self.udp_running = False
             self.log_message("Error starting UDP server: " + str(e))
 
     def _udp_server_loop(self):
         """UDP server loop - receives fire-and-forget parameter updates."""
-        while self.running:
+        while self.udp_running:
             try:
                 data, addr = self.udp_sock.recvfrom(4096)
                 if not data:
@@ -271,7 +276,9 @@ class AbletonMCP(ControlSurface):
 
                 try:
                     command = json.loads(data.decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError) as parse_err:
+                    self.log_message(
+                        "UDP: malformed packet from {0}: {1}".format(addr, parse_err))
                     continue
 
                 self._process_udp_command(command)
@@ -279,7 +286,7 @@ class AbletonMCP(ControlSurface):
             except socket.timeout:
                 continue
             except Exception as e:
-                if self.running:
+                if self.udp_running:
                     self.log_message("UDP server error: " + str(e))
                 time.sleep(0.1)
 
@@ -453,10 +460,16 @@ class AbletonMCP(ControlSurface):
         """Return a client-safe error message.
 
         ValueError/IndexError messages are kept (user-input validation).
+        KeyError -> "Missing required parameter: <key>"
+        TypeError -> "Invalid parameter type"
         Everything else gets a generic message; details stay in the log.
         """
         if isinstance(e, (ValueError, IndexError)):
             return str(e)
+        if isinstance(e, KeyError):
+            return "Missing required parameter: {0}".format(e)
+        if isinstance(e, TypeError):
+            return "Invalid parameter type"
         if isinstance(e, queue.Empty):
             return "Operation timed out"
         return "Internal error - check Ableton log for details"
@@ -973,7 +986,7 @@ class AbletonMCP(ControlSurface):
         elif cmd == "get_track_routing":
             return handlers.tracks.get_track_routing(song, p.get("track_index", 0), ctrl)
         elif cmd == "get_track_meters":
-            return handlers.tracks.get_track_meters(song, p.get("track_index"), ctrl)
+            return handlers.tracks.get_track_meters(song, p.get("track_index", 0), ctrl)
         elif cmd == "get_take_lanes":
             return handlers.tracks.get_take_lanes(song, p.get("track_index", 0), ctrl)
 
