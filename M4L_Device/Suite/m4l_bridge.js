@@ -276,7 +276,7 @@ function handleGetAppVersion(args) {
 
         sendResult(result, requestId);
     } catch (e) {
-        sendError("Failed to get app version: " + e.toString(), requestId);
+        sendError("Failed to get app version: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -488,7 +488,7 @@ function _discoverNextChunk() {
         var rid = s.requestId;
         try { s.cursor.goto(s.devicePath); } catch (ignore) {}
         _discoverState = null;
-        sendError("Discovery failed at param " + s.idx + ": " + e.toString(), rid);
+        sendError("Discovery failed at param " + s.idx + ": " + safeErrorMessage(e), rid);
     }
 }
 
@@ -534,7 +534,7 @@ function handleBatchSetHiddenParams(args) {
     try {
         paramsJson = _base64decode(paramsB64);
     } catch (e) {
-        sendError("Failed to decode params_json_b64: " + e.toString(), requestId);
+        sendError("Failed to decode params_json_b64: " + safeErrorMessage(e), requestId);
         return;
     }
     post("batch_set: decoded json len=" + paramsJson.length + "\n");
@@ -543,7 +543,7 @@ function handleBatchSetHiddenParams(args) {
     try {
         paramsList = JSON.parse(paramsJson);
     } catch (e) {
-        sendError("Failed to parse params JSON: " + e.toString(), requestId);
+        sendError("Failed to parse params JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -665,7 +665,7 @@ function _batchProcessNextChunk() {
     } catch (e) {
         var rid = s ? s.requestId : "";
         _batchState = null;
-        sendError("Batch processing failed at cursor " + (s ? s.cursor : "?") + ": " + e.toString(), rid);
+        sendError("Batch processing failed at cursor " + (s ? s.cursor : "?") + ": " + safeErrorMessage(e), rid);
     }
 }
 
@@ -943,7 +943,7 @@ function handleSetChainDeviceParam(args) {
             was_clamped:     (clamped !== value)
         }, requestId);
     } catch (e) {
-        sendError("Failed to set chain device parameter: " + e.toString(), requestId);
+        sendError("Failed to set chain device parameter: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1085,12 +1085,12 @@ function handleSetSimplerSampleProps(args) {
 
     var propsJson;
     try { propsJson = _base64decode(propsB64); } catch (e) {
-        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        sendError("Failed to decode props_json_b64: " + safeErrorMessage(e), requestId);
         return;
     }
     var props;
     try { props = JSON.parse(propsJson); } catch (e) {
-        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        sendError("Failed to parse props JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1099,7 +1099,7 @@ function handleSetSimplerSampleProps(args) {
     try {
         sampleApi = new LiveAPI(null, samplePath);
     } catch (e) {
-        sendError("No sample found: " + e.toString(), requestId);
+        sendError("No sample found: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1177,7 +1177,7 @@ function handleSimplerSlice(args) {
     try {
         sampleApi = new LiveAPI(null, samplePath);
     } catch (e) {
-        sendError("No sample found: " + e.toString(), requestId);
+        sendError("No sample found: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1214,7 +1214,7 @@ function handleSimplerSlice(args) {
                 break;
         }
     } catch (e) {
-        sendError("Slice operation failed: " + e.toString(), requestId);
+        sendError("Slice operation failed: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1367,7 +1367,7 @@ function handleSetWavetableModulation(args) {
             actual_amount: actualVal
         }, requestId);
     } catch (e) {
-        sendError("Failed to set modulation: " + e.toString(), requestId);
+        sendError("Failed to set modulation: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1386,12 +1386,12 @@ function handleSetWavetableProps(args) {
 
     var propsJson;
     try { propsJson = _base64decode(propsB64); } catch (e) {
-        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        sendError("Failed to decode props_json_b64: " + safeErrorMessage(e), requestId);
         return;
     }
     var props;
     try { props = JSON.parse(propsJson); } catch (e) {
-        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        sendError("Failed to parse props JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1741,7 +1741,7 @@ function handleGetClipNotesById(args) {
             has_note_ids: true
         }, requestId);
     } catch (e) {
-        sendError("Failed to get clip notes with IDs: " + e.toString(), requestId);
+        sendError("Failed to get clip notes with IDs: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1764,13 +1764,13 @@ function handleModifyClipNotes(args) {
 
     var modsJson;
     try { modsJson = _base64decode(modsB64); } catch (e) {
-        sendError("Failed to decode modifications base64: " + e.toString(), requestId);
+        sendError("Failed to decode modifications base64: " + safeErrorMessage(e), requestId);
         return;
     }
 
     var modifications;
     try { modifications = JSON.parse(modsJson); } catch (e) {
-        sendError("Failed to parse modifications JSON: " + e.toString(), requestId);
+        sendError("Failed to parse modifications JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1788,7 +1788,7 @@ function handleModifyClipNotes(args) {
             status: "applied"
         }, requestId);
     } catch (e) {
-        sendError("Failed to apply note modifications: " + e.toString(), requestId);
+        sendError("Failed to apply note modifications: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1811,13 +1811,13 @@ function handleRemoveClipNotesById(args) {
 
     var idsJson;
     try { idsJson = _base64decode(idsB64); } catch (e) {
-        sendError("Failed to decode note_ids base64: " + e.toString(), requestId);
+        sendError("Failed to decode note_ids base64: " + safeErrorMessage(e), requestId);
         return;
     }
 
     var noteIds;
     try { noteIds = JSON.parse(idsJson); } catch (e) {
-        sendError("Failed to parse note_ids JSON: " + e.toString(), requestId);
+        sendError("Failed to parse note_ids JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -1830,7 +1830,7 @@ function handleRemoveClipNotesById(args) {
             status: "removed"
         }, requestId);
     } catch (e) {
-        sendError("Failed to remove notes by ID: " + e.toString(), requestId);
+        sendError("Failed to remove notes by ID: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1920,7 +1920,7 @@ function handleGetChainMixing(args) {
 
         sendResult(result, requestId);
     } catch (e) {
-        sendError("Failed to get chain mixing: " + e.toString(), requestId);
+        sendError("Failed to get chain mixing: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -1938,12 +1938,12 @@ function handleSetChainMixing(args) {
 
     var propsJson;
     try { propsJson = _base64decode(propsB64); } catch (e) {
-        sendError("Failed to decode props base64: " + e.toString(), requestId);
+        sendError("Failed to decode props base64: " + safeErrorMessage(e), requestId);
         return;
     }
     var props;
     try { props = JSON.parse(propsJson); } catch (e) {
-        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        sendError("Failed to parse props JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -2010,7 +2010,7 @@ function handleSetChainMixing(args) {
 
         sendResult({ changes: changes, status: "applied" }, requestId);
     } catch (e) {
-        sendError("Failed to set chain mixing: " + e.toString(), requestId);
+        sendError("Failed to set chain mixing: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2084,7 +2084,7 @@ function handleDeviceAbCompare(args) {
             sendError("Unknown AB compare action: " + action + " (use get_state, save, or toggle)", requestId);
         }
     } catch (e) {
-        sendError("AB comparison failed: " + e.toString(), requestId);
+        sendError("AB comparison failed: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2127,7 +2127,7 @@ function handleClipScrub(args) {
             sendError("Unknown clip_scrub action: " + action + " (use scrub or stop_scrub)", requestId);
         }
     } catch (e) {
-        sendError("Clip scrub failed: " + e.toString(), requestId);
+        sendError("Clip scrub failed: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2177,7 +2177,7 @@ function handleGetSplitStereo(args) {
 
         sendResult(result, requestId);
     } catch (e) {
-        sendError("Failed to get split stereo: " + e.toString(), requestId);
+        sendError("Failed to get split stereo: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2215,7 +2215,7 @@ function handleSetSplitStereo(args) {
 
         sendResult({ changes: changes, status: "applied" }, requestId);
     } catch (e) {
-        sendError("Failed to set split stereo: " + e.toString(), requestId);
+        sendError("Failed to set split stereo: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2254,6 +2254,15 @@ function sendResult(result, requestId) {
         id: requestId
     };
     sendResponse(JSON.stringify(response));
+}
+
+function safeErrorMessage(e) {
+    // Keep short, non-internal messages; return generic text for internal details.
+    var msg = (e && typeof e.toString === "function") ? e.toString() : "unknown";
+    if (msg.length > 200 || msg.indexOf("live_set") !== -1 || msg.indexOf("\\") !== -1) {
+        return "internal error";
+    }
+    return msg;
 }
 
 function sendError(message, requestId) {
@@ -2619,7 +2628,7 @@ function handleGetCuePoints(args) {
             cue_points: cuePoints
         }, requestId);
     } catch (e) {
-        sendError("Failed to get cue points: " + e.toString(), requestId);
+        sendError("Failed to get cue points: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2652,7 +2661,7 @@ function handleJumpToCuePoint(args) {
             time: cpTime
         }, requestId);
     } catch (e) {
-        sendError("Failed to jump to cue point: " + e.toString(), requestId);
+        sendError("Failed to jump to cue point: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2701,7 +2710,7 @@ function handleGetGroovePool(args) {
             grooves: grooves
         }, requestId);
     } catch (e) {
-        sendError("Failed to get groove pool: " + e.toString(), requestId);
+        sendError("Failed to get groove pool: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2720,12 +2729,12 @@ function handleSetGrooveProperties(args) {
 
     var propsJson;
     try { propsJson = _base64decode(propsB64); } catch (e) {
-        sendError("Failed to decode props_json_b64: " + e.toString(), requestId);
+        sendError("Failed to decode props_json_b64: " + safeErrorMessage(e), requestId);
         return;
     }
     var props;
     try { props = JSON.parse(propsJson); } catch (e) {
-        sendError("Failed to parse props JSON: " + e.toString(), requestId);
+        sendError("Failed to parse props JSON: " + safeErrorMessage(e), requestId);
         return;
     }
 
@@ -2765,7 +2774,7 @@ function handleSetGrooveProperties(args) {
         if (errors.length > 0) result.errors = errors;
         sendResult(result, requestId);
     } catch (e) {
-        sendError("Failed to set groove properties: " + e.toString(), requestId);
+        sendError("Failed to set groove properties: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2841,7 +2850,7 @@ function handleObserveProperty(args) {
         }, requestId);
     } catch (e) {
         delete _observers[key];
-        sendError("Failed to start observing: " + e.toString(), requestId);
+        sendError("Failed to start observing: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -2962,7 +2971,7 @@ function handleSetParamClean(args) {
             note: "Set via M4L bridge. For true undo-free sets, live.remote~ is needed in the Max patch."
         }, requestId);
     } catch (e) {
-        sendError("Failed to set parameter cleanly: " + e.toString(), requestId);
+        sendError("Failed to set parameter cleanly: " + safeErrorMessage(e), requestId);
     }
 }
 
@@ -3360,6 +3369,6 @@ function _crossTrackCapture() {
 
         var rid = s.requestId;
         _crossTrackState = null;
-        sendError("Cross-track capture failed: " + e.toString(), rid);
+        sendError("Cross-track capture failed: " + safeErrorMessage(e), rid);
     }
 }

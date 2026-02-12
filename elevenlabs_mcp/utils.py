@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 from fuzzywuzzy import fuzz
@@ -13,34 +14,52 @@ def make_error(error_text: str):
 
 
 def is_file_writeable(path: Path) -> bool:
-    if path.exists():
-        return os.access(path, os.W_OK)
-    parent_dir = path.parent
-    return os.access(parent_dir, os.W_OK)
+    """Check if path is writable. Walks up to the first existing ancestor."""
+    check = path
+    while not check.exists():
+        parent = check.parent
+        if parent == check:
+            # Reached filesystem root without finding existing dir
+            return False
+        check = parent
+    return os.access(check, os.W_OK)
 
 
 def make_output_file(
     tool: str, text: str, output_path: Path, extension: str, full_id: bool = False
 ) -> Path:
-    id = text if full_id else text[:5]
-
-    output_file_name = f"{tool}_{id.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{extension}"
-    return output_path / output_file_name
+    id_raw = text if full_id else text[:5]
+    # Strip everything except alphanumerics, hyphens, underscores
+    id_safe = re.sub(r'[^a-zA-Z0-9_\-]', '_', id_raw)
+    if not id_safe:
+        id_safe = "unnamed"
+    output_file_name = "{0}_{1}_{2}.{3}".format(
+        tool, id_safe, datetime.now().strftime('%Y%m%d_%H%M%S'), extension)
+    output_file = (output_path / output_file_name).resolve()
+    # Ensure the file stays within the output directory
+    if not str(output_file).startswith(str(output_path.resolve())):
+        raise ElevenLabsMcpError(
+            "Generated filename escapes output directory")
+    return output_file
 
 
 def make_output_path(
     output_directory: str | None, base_path: str | None = None
 ) -> Path:
-    output_path = None
     if output_directory is None:
         output_path = Path.home() / "Desktop"
     elif not os.path.isabs(output_directory) and base_path:
-        output_path = Path(os.path.expanduser(base_path)) / Path(output_directory)
+        resolved_base = Path(os.path.expanduser(base_path)).resolve()
+        output_path = (resolved_base / Path(output_directory)).resolve()
+        if not str(output_path).startswith(str(resolved_base)):
+            make_error(
+                "Output directory ({0}) escapes base path ({1})".format(
+                    output_directory, resolved_base))
     else:
-        output_path = Path(os.path.expanduser(output_directory))
-    if not is_file_writeable(output_path):
-        make_error(f"Directory ({output_path}) is not writeable")
+        output_path = Path(os.path.expanduser(output_directory)).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
+    if not is_file_writeable(output_path):
+        make_error("Directory ({0}) is not writeable".format(output_path))
     return output_path
 
 
@@ -111,11 +130,20 @@ def check_audio_file(path: Path) -> bool:
 
 
 def handle_input_file(file_path: str, audio_content_check: bool = True) -> Path:
-    if not os.path.isabs(file_path) and not os.environ.get("ELEVENLABS_MCP_BASE_PATH"):
+    base_path = os.environ.get("ELEVENLABS_MCP_BASE_PATH")
+    if not os.path.isabs(file_path) and not base_path:
         make_error(
             "File path must be an absolute path if ELEVENLABS_MCP_BASE_PATH is not set"
         )
-    path = Path(file_path)
+    if not os.path.isabs(file_path) and base_path:
+        resolved_base = Path(os.path.expanduser(base_path)).resolve()
+        path = (resolved_base / Path(file_path)).resolve()
+        if not str(path).startswith(str(resolved_base)):
+            make_error(
+                "File path ({0}) escapes base path ({1})".format(
+                    file_path, resolved_base))
+    else:
+        path = Path(file_path).resolve()
     if not path.exists() and path.parent.exists():
         parent_directory = path.parent
         similar_files = try_find_similar_files(path.name, parent_directory)

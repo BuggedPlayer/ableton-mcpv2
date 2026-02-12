@@ -422,7 +422,7 @@ class AbletonMCP(ControlSurface):
                     self.log_message("Error handling client data: " + str(e))
                     self.log_message(traceback.format_exc())
 
-                    error_response = {"status": "error", "message": str(e)}
+                    error_response = {"status": "error", "message": self._safe_error_message(e)}
                     try:
                         client.sendall((json.dumps(error_response) + '\n').encode('utf-8'))
                     except Exception:
@@ -446,6 +446,22 @@ class AbletonMCP(ControlSurface):
             self.log_message("Client handler stopped")
 
     # ------------------------------------------------------------------
+    # Error sanitisation
+    # ------------------------------------------------------------------
+
+    def _safe_error_message(self, e):
+        """Return a client-safe error message.
+
+        ValueError/IndexError messages are kept (user-input validation).
+        Everything else gets a generic message; details stay in the log.
+        """
+        if isinstance(e, (ValueError, IndexError)):
+            return str(e)
+        if isinstance(e, queue.Empty):
+            return "Operation timed out"
+        return "Internal error - check Ableton log for details"
+
+    # ------------------------------------------------------------------
     # Command routing
     # ------------------------------------------------------------------
 
@@ -467,7 +483,7 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error processing command: " + str(e))
             self.log_message(traceback.format_exc())
             response["status"] = "error"
-            response["message"] = str(e)
+            response["message"] = self._safe_error_message(e)
 
         return response
 
@@ -482,7 +498,7 @@ class AbletonMCP(ControlSurface):
             except Exception as e:
                 self.log_message("Error in main thread task: " + str(e))
                 self.log_message(traceback.format_exc())
-                response_queue.put({"status": "error", "message": str(e)})
+                response_queue.put({"status": "error", "message": self._safe_error_message(e)})
 
         try:
             self.schedule_message(0, main_thread_task)
@@ -506,7 +522,7 @@ class AbletonMCP(ControlSurface):
             except Exception as e:
                 self.log_message("Error in main thread read-only task: " + str(e))
                 self.log_message(traceback.format_exc())
-                response_queue.put({"status": "error", "message": str(e)})
+                response_queue.put({"status": "error", "message": self._safe_error_message(e)})
 
         try:
             self.schedule_message(0, main_thread_task)
