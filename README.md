@@ -2,7 +2,7 @@
 
 **230 tools connecting Claude AI to Ableton Live** (+19 optional ElevenLabs voice/SFX tools)
 
-AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation. Wispr Flow ready
+AbletonMCP gives Claude direct control over your Ableton Live session through the Model Context Protocol. Create tracks, write MIDI, design sounds, mix, automate, browse instruments, snapshot presets, and navigate deep into device chains and modulation matrices — all through natural language conversation.
 
 ---
 
@@ -219,7 +219,7 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 - **Singleton guard** — exclusive TCP port lock (9881) prevents duplicate MCP server instances from conflicting.
 
-- **Disk-persisted browser cache** — 6,400+ browser items cached to `~/.ableton-mcp/browser_cache.json`. Loaded instantly on startup (~50ms). Background refresh keeps it current. No 2-3 minute wait on first launch.
+- **Disk-persisted browser cache** — 6,400+ browser items cached to `~/.ableton-mcp/browser_cache.json.gz`. Loaded instantly on startup (~50ms). Background refresh keeps it current. No 2-3 minute wait on first launch.
 
 - **Auto-reconnect with exponential backoff** — both TCP and UDP connections recover automatically from Ableton restarts or network interruptions.
 
@@ -240,7 +240,7 @@ AbletonMCP is built to handle real-world sessions without crashing Ableton. Ever
 
 ## Version
 
-**v2.7.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
+**v2.9.0** — see [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ---
 

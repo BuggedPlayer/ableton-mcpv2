@@ -4,6 +4,45 @@ All notable changes to AbletonMCP Beta will be documented in this file.
 
 ---
 
+## v2.9.0 — 2026-02-14
+
+### Performance & Code Quality Sweep
+
+Internal refactoring across all 4 layers — no new tools, no API changes, no behavior changes.
+
+#### Remote Script: O(1) Command Dispatch (was O(n))
+- **perf**: Replaced 530-line if/elif dispatch chain with two dict lookup tables (`_MODIFYING_HANDLERS`, `_READONLY_HANDLERS`) — O(1) command routing
+- **DRY**: Merged two near-identical `_dispatch_on_main_thread` / `_dispatch_on_main_thread_readonly` wrappers into single `_dispatch_on_main_thread_impl`
+
+#### Remote Script: Shared Validation Helpers
+- **refactor**: Extracted `handlers/_helpers.py` with `get_track()`, `get_clip_slot()`, `get_clip()`, `get_scene()` — eliminates ~85 inline validation patterns across all 11 handler files
+- Consistent error messages and bounds checking in one place
+
+#### MCP Server: Grid Notation Performance
+- **perf**: Pre-compiled regex patterns at module level (was recompiling on every call)
+- **perf**: String `+=` in loops replaced with list + `"".join()` (O(n) vs O(n²))
+- **perf**: `is_drum_track()` merged from 3 passes to single pass over notes
+
+#### MCP Server: M4L Response Parsing
+- **perf**: Reordered base64 decode — tries URL-safe first (the common path since v2.0.0), eliminating 1 exception per response
+
+#### MCP Server: Gzip Browser Cache
+- **perf**: Browser disk cache now uses gzip compression (~85% smaller files, faster I/O)
+- Backward compatible: loads legacy `.json` caches if `.json.gz` not found
+
+#### M4L Bridge: Object Lookup Maps
+- **perf**: Replaced linear array scans with object property lookups in `setSimplerSampleProperty`, `setDeviceProperty`, and readonly checks — O(1) vs O(n)
+
+#### ElevenLabs MCP: Reliability & Streaming
+- **fix**: httpx client now has explicit timeouts (60s request, 10s connect) + atexit cleanup
+- **fix**: `voice_clone` file handles properly closed in `finally` block (was leaking on mid-list errors)
+- **fix**: Path containment uses `relative_to()` instead of fragile string prefix check
+- **perf**: Audio data streamed to disk chunk-by-chunk (was `b"".join()` full buffer in memory)
+
+### No tool count change — Total tools: **230** + **19 optional** (ElevenLabs) = **249 total**
+
+---
+
 ## v2.8.1 — 2026-02-11
 
 ### Server: Browser Cache — Faster Startup, Less Overhead
