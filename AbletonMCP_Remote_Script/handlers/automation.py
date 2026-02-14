@@ -66,8 +66,10 @@ def create_clip_automation(song, track_index, clip_index, parameter_name, automa
 
         # Insert breakpoints — Ableton linearly interpolates between them.
         # Use duration=0 to create simple breakpoints (not held steps).
+        clip_length = clip.length
         for point in automation_points:
             time_val = float(point.get("time", 0.0))
+            time_val = max(0.0, min(clip_length, time_val))
             value = float(point.get("value", 0.0))
             clamped = max(param.min, min(param.max, value))
             envelope.insert_step(time_val, 0.0, clamped)

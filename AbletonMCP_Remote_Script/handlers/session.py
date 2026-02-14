@@ -971,7 +971,9 @@ def get_tuning_system(song, ctrl=None):
         except Exception:
             result["note_tunings"] = None
         return result
-    except Exception:
+    except Exception as e:
+        if ctrl:
+            ctrl.log_message("get_tuning_system failed: " + str(e))
         return {
             "name": "Equal Temperament",
             "pseudo_octave_in_cents": 1200.0,

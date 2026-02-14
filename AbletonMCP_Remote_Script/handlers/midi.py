@@ -266,7 +266,7 @@ def quantize_clip_notes(song, track_index, clip_index, grid_size, ctrl=None):
 
         clip = _get_midi_clip(song, track_index, clip_index)
 
-        notes_tuple = clip.get_notes(0, 0, clip.length, 128)
+        notes_tuple = clip.get_notes(0, 0, clip.length + 1, 128)
         notes_count = len(notes_tuple)
 
         if notes_count == 0:
@@ -288,7 +288,7 @@ def quantize_clip_notes(song, track_index, clip_index, grid_size, ctrl=None):
             # probability, velocity_deviation, release_velocity (Live 11+)
             used_extended = False
             if hasattr(clip, 'get_notes_extended') and hasattr(clip, 'apply_note_modifications'):
-                raw_notes = clip.get_notes_extended(0, 128, 0, clip.length)
+                raw_notes = clip.get_notes_extended(0, 128, 0, clip.length + 1)
                 try:
                     for note in raw_notes:
                         old_time = note.start_time if hasattr(note, 'start_time') else note[1]
@@ -314,9 +314,9 @@ def quantize_clip_notes(song, track_index, clip_index, grid_size, ctrl=None):
                 # remove, all notes are lost.  We attempt to restore the
                 # original notes on failure.
                 if hasattr(clip, 'remove_notes_extended'):
-                    clip.remove_notes_extended(0, 128, 0, clip.length)
+                    clip.remove_notes_extended(0, 128, 0, clip.length + 1)
                 else:
-                    clip.remove_notes(0, 0, clip.length, 128)
+                    clip.remove_notes(0, 0, clip.length + 1, 128)
                 try:
                     clip.set_notes(tuple(quantized_notes))
                 except Exception:
@@ -343,14 +343,14 @@ def transpose_clip_notes(song, track_index, clip_index, semitones, ctrl=None):
     try:
         clip = _get_midi_clip(song, track_index, clip_index)
 
-        notes_tuple = clip.get_notes(0, 0, clip.length, 128)
+        notes_tuple = clip.get_notes(0, 0, clip.length + 1, 128)
         if len(notes_tuple) == 0:
             return {"transposed": True, "notes_transposed": 0, "semitones": semitones}
 
         # Prefer extended API to preserve probability/velocity_deviation/release_velocity
         used_extended = False
         if hasattr(clip, 'get_notes_extended') and hasattr(clip, 'apply_note_modifications'):
-            raw_notes = clip.get_notes_extended(0, 128, 0, clip.length)
+            raw_notes = clip.get_notes_extended(0, 128, 0, clip.length + 1)
             try:
                 for note in raw_notes:
                     old_pitch = note.pitch if hasattr(note, 'pitch') else note[0]
@@ -376,9 +376,9 @@ def transpose_clip_notes(song, track_index, clip_index, semitones, ctrl=None):
             # remove, all notes are lost.  We attempt to restore the
             # original notes on failure.
             if hasattr(clip, 'remove_notes_extended'):
-                clip.remove_notes_extended(0, 128, 0, clip.length)
+                clip.remove_notes_extended(0, 128, 0, clip.length + 1)
             else:
-                clip.remove_notes(0, 0, clip.length, 128)
+                clip.remove_notes(0, 0, clip.length + 1, 128)
             try:
                 clip.set_notes(tuple(transposed_notes))
             except Exception:
